@@ -1,0 +1,23 @@
+# Video files (too large for git — share via releases or externally)
+*.mp4
+*.avi
+*.mkv
+*.mov
+
+# Screenshots / generated output
+screenshot_*.jpg
+logs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
