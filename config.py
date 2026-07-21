@@ -80,3 +80,73 @@ COLOR_HUD_BG      = (20,  20,  20)    # Near-black HUD background
 # Debug mode — draws ROI outline and raw Hough lines when True
 # ---------------------------------------------------------------------------
 DEBUG_MODE = False
+
+# ===========================================================================
+# MODULE 2 — Object detection (YOLOv8n)
+# ===========================================================================
+
+# Model file — 'yolov8n.pt' is the nano version (~6 MB, fastest on CPU).
+# Downloads automatically on first run. Alternatives: yolov8s.pt (more
+# accurate, slower). Stick with nano on a CPU-only machine.
+YOLO_MODEL = "yolov8n.pt"
+
+YOLO_CONF_THRESHOLD = 0.35   # Minimum detection confidence
+YOLO_IOU_THRESHOLD  = 0.45   # Non-max-suppression IoU threshold
+
+# COCO class names we care about on a road. Everything else is ignored.
+RELEVANT_CLASSES = {
+    "person",
+    "bicycle",
+    "car",
+    "motorcycle",
+    "bus",
+    "train",
+    "truck",
+    "traffic light",
+    "stop sign",
+    "cat",
+    "dog",
+    "cow",           # relevant on Indian roads
+}
+
+# ---------------------------------------------------------------------------
+# Monocular distance estimation
+# ---------------------------------------------------------------------------
+# Calibration reference (a typical car): ~1.5 m tall appearing ~220 px high
+# at ~15 m from the camera. Adjust CALIB_* if your dashcam mounting differs.
+CALIB_REAL_HEIGHT_M = 1.5
+CALIB_PIXEL_HEIGHT  = 220.0
+CALIB_DISTANCE_M    = 15.0
+
+# Typical real-world heights (metres) per class, used to back out distance.
+CLASS_REAL_HEIGHTS = {
+    "person":     1.7,
+    "bicycle":    1.1,
+    "car":        1.5,
+    "motorcycle": 1.3,
+    "bus":        3.2,
+    "truck":      3.5,
+    "cow":        1.5,
+    "dog":        0.6,
+    "cat":        0.3,
+    "default":    1.5,
+}
+
+# ---------------------------------------------------------------------------
+# Path corridor — how wide the "in front of us" zone is (pixels, half-width).
+# Narrows near the horizon, widens near the vehicle to mimic perspective.
+# ---------------------------------------------------------------------------
+PATH_CORRIDOR_MIN_PX = 60     # half-width near the horizon
+PATH_CORRIDOR_MAX_PX = 300    # half-width near the vehicle
+
+# ---------------------------------------------------------------------------
+# Risk thresholds by estimated distance (metres)
+# ---------------------------------------------------------------------------
+RISK_DISTANCE_HIGH   = 8.0    # closer than this + in path = HIGH risk
+RISK_DISTANCE_MEDIUM = 20.0   # closer than this = MEDIUM risk
+
+# ---------------------------------------------------------------------------
+# Module toggles
+# ---------------------------------------------------------------------------
+ENABLE_LANE_DETECTION   = True
+ENABLE_OBJECT_DETECTION = True

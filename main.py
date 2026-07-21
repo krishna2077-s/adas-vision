@@ -1,18 +1,24 @@
 """
-main.py — Entry point for the ADAS Vision lane detection system.
+main.py — Entry point for the ADAS Vision system.
+
+Runs lane detection (Module 1) and object detection (Module 2) together on a
+video file or live webcam feed.
 
 Run:
-    # Webcam
+    # Webcam, both modules
     python main.py --camera
 
-    # Video file
-    python main.py --video path/to/dashcam.mp4
+    # Video file, both modules
+    python main.py --video dashcam.mp4
 
-    # Video file with debug overlay (shows ROI + raw Hough lines)
-    python main.py --video path/to/dashcam.mp4 --debug
+    # Lanes only (no YOLO — useful if ultralytics isn't installed)
+    python main.py --video dashcam.mp4 --no-objects
 
-    # Save annotated output to a file
-    python main.py --video path/to/dashcam.mp4 --save output.mp4
+    # Objects only
+    python main.py --video dashcam.mp4 --no-lanes
+
+    # Debug overlay + save annotated output
+    python main.py --video dashcam.mp4 --debug --save output.mp4
 
 Controls while running:
     Q  — quit
@@ -24,7 +30,6 @@ Controls while running:
 import argparse
 import logging
 import sys
-import time
 from pathlib import Path
 
 import cv2
@@ -41,17 +46,21 @@ logger = logging.getLogger(__name__)
 
 
 def run(
-    source,            # int (camera index) or str (video path)
+    source,
     save_path: str = None,
     debug: bool = False,
+    enable_lanes: bool = True,
+    enable_objects: bool = True,
 ) -> None:
     """
-    Main loop: reads frames, runs lane detection, displays result.
+    Main loop: reads frames, runs enabled modules, displays the combined result.
 
     Args:
-        source:    Camera index (int) or path to video file (str).
-        save_path: If set, writes annotated video to this path.
-        debug:     Enables debug overlay at startup.
+        source:         Camera index (int) or path to video file (str).
+        save_path:      If set, writes the annotated video here.
+        debug:          Enables the lane debug overlay at startup.
+        enable_lanes:   Run Module 1 (lane detection).
+        enable_objects: Run Module 2 (object detection).
     """
     cfg.DEBUG_MODE = debug
 
@@ -60,16 +69,29 @@ def run(
         logger.error(f"Cannot open source: {source}")
         sys.exit(1)
 
-    # Read actual frame size from the capture
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps_src = cap.get(cv2.CAP_PROP_FPS) or cfg.TARGET_FPS
-
     logger.info(f"Source opened: {w}x{h} @ {fps_src:.1f} FPS")
 
-    detector = LaneDetector(frame_width=w, frame_height=h)
+    # ── Initialise modules ────────────────────────────────────────────────
+    lane_detector = LaneDetector(frame_width=w, frame_height=h) if enable_lanes else None
 
-    # Optional video writer
+    object_detector = None
+    if enable_objects:
+        try:
+            from object_detection import ObjectDetector
+            object_detector = ObjectDetector(frame_width=w, frame_height=h)
+        except ImportError as exc:
+            logger.warning(f"Object detection disabled: {exc}")
+            logger.warning("Continuing with lane detection only.")
+            enable_objects = False
+
+    if not enable_lanes and not enable_objects:
+        logger.error("Both modules are disabled — nothing to run.")
+        sys.exit(1)
+
+    # ── Optional writer ────────────────────────────────────────────────────
     writer = None
     if save_path:
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
@@ -78,41 +100,61 @@ def run(
 
     paused = False
     screenshot_idx = 0
-    window_name = "ADAS Vision — Lane Detection  (Q quit | D debug | P pause | S screenshot)"
+    last_status = None
+    window_name = "ADAS Vision  (Q quit | D debug | P pause | S screenshot)"
 
     logger.info("Starting. Press Q to quit.")
 
+    annotated = None
     while True:
         if not paused:
             ret, frame = cap.read()
             if not ret:
-                # End of video file — loop back to start
                 if isinstance(source, str):
-                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)   # loop video
                     continue
-                else:
-                    logger.error("Camera read failed.")
-                    break
+                logger.error("Camera read failed.")
+                break
 
-            result, annotated = detector.process(frame)
+            annotated = frame
+            lane_center_x = None
+            steering = "N/A"
+            lane_fps = 0.0
 
-            # Print steering decision to terminal only when it changes
-            if not hasattr(run, "_last_steering") or run._last_steering != result.steering:
-                logger.info(
-                    f"Steering: {result.steering:<25} | "
-                    f"Offset: {result.offset_px:+4d}px | "
-                    f"Conf: {result.confidence:.0%} | "
-                    f"FPS: {result.fps:.1f}"
+            # ── Module 1: lanes ───────────────────────────────────────
+            if lane_detector is not None:
+                lane_result, annotated = lane_detector.process(annotated)
+                lane_center_x = lane_result.lane_center_x
+                steering = lane_result.steering
+                lane_fps = lane_result.fps
+
+            # ── Module 2: objects ─────────────────────────────────────
+            risk = "N/A"
+            nearest = None
+            if object_detector is not None:
+                obj_result, annotated = object_detector.process(annotated, lane_center_x)
+                risk = obj_result.highest_risk
+                nearest = obj_result.nearest_in_path
+
+            # ── Terminal log on state change ──────────────────────────
+            status = (steering, risk, nearest.label if nearest else None)
+            if status != last_status:
+                near_txt = (
+                    f"{nearest.label}@{nearest.distance_m:.0f}m" if nearest else "clear"
                 )
-                run._last_steering = result.steering
+                logger.info(
+                    f"Steering: {steering:<22} | Risk: {risk:<6} | "
+                    f"Ahead: {near_txt:<14} | LaneFPS: {lane_fps:.1f}"
+                )
+                last_status = status
 
             if writer:
                 writer.write(annotated)
 
-        cv2.imshow(window_name, annotated if not paused else annotated)
+        if annotated is not None:
+            cv2.imshow(window_name, annotated)
 
         key = cv2.waitKey(1) & 0xFF
-
         if key == ord("q"):
             logger.info("Quit.")
             break
@@ -136,18 +178,21 @@ def run(
 
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="ADAS Vision — Real-time lane detection system",
+        description="ADAS Vision — lane + object detection",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples
 --------
-  Webcam:
+  Webcam (both modules):
     python main.py --camera
 
-  Video file:
+  Video file (both modules):
     python main.py --video dashcam.mp4
 
-  Video with debug overlay + save output:
+  Lanes only:
+    python main.py --video dashcam.mp4 --no-objects
+
+  Debug + save:
     python main.py --video dashcam.mp4 --debug --save output.mp4
         """,
     )
@@ -162,6 +207,8 @@ Examples
                    help="Show ROI outline and raw Hough lines.")
     p.add_argument("--save", type=str, metavar="PATH",
                    help="Save annotated output to this .mp4 file.")
+    p.add_argument("--no-lanes",   action="store_true", help="Disable lane detection.")
+    p.add_argument("--no-objects", action="store_true", help="Disable object detection.")
 
     return p.parse_args()
 
@@ -169,4 +216,10 @@ Examples
 if __name__ == "__main__":
     args = _parse_args()
     source = args.camera_index if args.camera else args.video
-    run(source=source, save_path=args.save, debug=args.debug)
+    run(
+        source=source,
+        save_path=args.save,
+        debug=args.debug,
+        enable_lanes=not args.no_lanes,
+        enable_objects=not args.no_objects,
+    )

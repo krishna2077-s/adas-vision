@@ -8,6 +8,9 @@
 screenshot_*.jpg
 logs/
 
+# Downloaded model weights (auto-downloads on first run)
+*.pt
+
 # Python
 __pycache__/
 *.py[cod]

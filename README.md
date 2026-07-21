@@ -2,19 +2,27 @@
 
 An open, low-cost Advanced Driver Assistance System built to run on hardware people already own — a dashcam or webcam and a standard laptop CPU. No GPU, no cloud, no dedicated hardware.
 
-**Phase 1 (this release): Real-time lane detection with live steering suggestions.**
+**Phases 1 & 2 (this release): Real-time lane detection with steering suggestions, plus object detection with collision warnings.**
 
 ## What it does
 
+**Lane detection (Module 1)**
 - Detects lane markings from dashcam footage or a live webcam in real time
 - Calculates the vehicle's drift from lane centre every frame
 - Outputs a live steering suggestion (`STRAIGHT`, `SLIGHT LEFT`, `MODERATE RIGHT`, `HARD LEFT`, ...)
 - Reports a confidence score and explicitly says so when it cannot see lanes
-- Runs at ~30 FPS on a standard laptop CPU
+
+**Object detection (Module 2)**
+- Detects road-relevant objects with YOLOv8n — cars, trucks, buses, pedestrians, two-wheelers, animals
+- Estimates each object's distance from a monocular bounding-box heuristic
+- Determines which objects are in the vehicle's forward path (perspective-aware corridor)
+- Assigns LOW / MEDIUM / HIGH risk and raises a Forward Collision Warning banner
+
+Both modules run together at interactive frame rates on a standard laptop CPU — no GPU.
 
 ## How it works
 
-Classical computer vision — no neural network in this phase:
+**Module 1** — classical computer vision, no neural network:
 
 ```
 Frame → Grayscale + Gaussian blur
@@ -27,15 +35,27 @@ Frame → Grayscale + Gaussian blur
       → Lane-centre offset → steering decision
 ```
 
-Well-tuned classical CV runs faster than deep learning on CPU and is fully explainable when it fails — the right starting point for a safety-critical system.
+**Module 2** — YOLOv8n inference plus geometry:
+
+```
+Frame → YOLOv8n detection (COCO classes, filtered to road-relevant)
+      → Monocular distance estimate (pinhole model, per-class heights)
+      → In-path test against Module 1's lane centre
+      → Distance + path → risk level → collision warning
+```
+
+Module 2 uses the lane centre from Module 1 to decide what counts as "in front of us," so the two modules genuinely cooperate rather than just sharing a window.
+
+> **Note on distance:** a single camera cannot measure true distance. Estimates come from apparent object size and are meant for relative "is this getting closer" logic, not survey-grade measurement.
 
 ## Project layout
 
 ```
 adas-vision/
-├── config.py           ← All tunable parameters (ROI, Canny, Hough, smoothing)
-├── lane_detection.py   ← LaneDetector class — the full pipeline
-├── main.py             ← CLI entry point: webcam or video file
+├── config.py            ← All tunable parameters (both modules)
+├── lane_detection.py    ← Module 1: LaneDetector
+├── object_detection.py  ← Module 2: ObjectDetector (YOLOv8n)
+├── main.py              ← CLI entry point: runs both modules together
 └── requirements.txt
 ```
 
@@ -47,16 +67,24 @@ pip install -r requirements.txt
 
 That's it — only OpenCV and NumPy.
 
+On first run, YOLOv8n weights (~6 MB) download automatically.
+
 ## Usage
 
 ```bash
-# Webcam
+# Webcam — both modules
 python main.py --camera
 
-# Dashcam video file
+# Dashcam video — both modules
 python main.py --video dashcam.mp4
 
-# Debug overlay (ROI trapezoid + raw Hough lines) and save annotated output
+# Lanes only (skip YOLO)
+python main.py --video dashcam.mp4 --no-objects
+
+# Objects only
+python main.py --video dashcam.mp4 --no-lanes
+
+# Debug overlay (ROI + raw Hough lines) and save annotated output
 python main.py --video dashcam.mp4 --debug --save output.mp4
 ```
 
@@ -88,9 +116,9 @@ Everything is in [config.py](config.py). The three settings that matter most:
 
 ## Roadmap
 
-- [x] **Phase 1** — Lane detection + steering suggestion (this release)
-- [ ] **Phase 2** — Object detection: vehicles, pedestrians, two-wheelers (YOLOv8n on CPU)
-- [ ] **Phase 3** — Decision engine combining lanes + objects
+- [x] **Phase 1** — Lane detection + steering suggestion
+- [x] **Phase 2** — Object detection + distance + collision warnings (YOLOv8n on CPU)
+- [ ] **Phase 3** — Decision engine fusing lanes + objects into a single driving action
 - [ ] **Phase 4** — Indian-road robustness: unmarked lanes, mixed traffic, night driving
 
 ## Design principles
