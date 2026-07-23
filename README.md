@@ -2,7 +2,7 @@
 
 An open, low-cost Advanced Driver Assistance System built to run on hardware people already own — a dashcam or webcam and a standard laptop CPU. No GPU, no cloud, no dedicated hardware.
 
-**Phases 1 & 2 (this release): Real-time lane detection with steering suggestions, plus object detection with collision warnings.**
+**Phases 1–3 (this release): real-time lane detection with steering suggestions, object detection with collision warnings, and a decision engine that fuses both into a single arbitrated driving action every frame.**
 
 ## What it does
 
@@ -18,7 +18,15 @@ An open, low-cost Advanced Driver Assistance System built to run on hardware peo
 - Determines which objects are in the vehicle's forward path (perspective-aware corridor)
 - Assigns LOW / MEDIUM / HIGH risk and raises a Forward Collision Warning banner
 
-Both modules run together at interactive frame rates on a standard laptop CPU — no GPU.
+**Decision engine (Module 3) — the brain**
+- Fuses the two modules' *results* (never pixels) into one arbitrated action per frame
+- **Longitudinal**: `PROCEED → CAUTION → SLOW → BRAKE → EMERGENCY_STOP`, driven by the nearest in-path hazard, its estimated distance, and a smoothed closing speed / time-to-collision
+- **Lateral**: `KEEP_LANE / CORRECT_LEFT / CORRECT_RIGHT / HOLD`, taken from the lane offset but *safety-clamped* — it never steers toward a hazard and never overrides braking
+- **Temporal debouncing** so a single noisy frame (one spurious box, one distance spike, one dropped lane) can't flip the action: escalation is fast, release is slow, and an emergency stop latches
+- **Degraded mode**: when lanes are lost it says so and behaves conservatively instead of pretending certainty
+- Emits one plain-English **reason** per frame, e.g. `[R2] BRAKE: car closing, 7.1m TTC 2.1s`
+
+All three modules run together at interactive frame rates on a standard laptop CPU — no GPU.
 
 ## How it works
 
@@ -46,16 +54,33 @@ Frame → YOLOv8n detection (COCO classes, filtered to road-relevant)
 
 Module 2 uses the lane centre from Module 1 to decide what counts as "in front of us," so the two modules genuinely cooperate rather than just sharing a window.
 
-> **Note on distance:** a single camera cannot measure true distance. Estimates come from apparent object size and are meant for relative "is this getting closer" logic, not survey-grade measurement.
+**Module 3** — sensor fusion + arbitration, an explainable rule engine (no neural network):
+
+```
+Lane result + Object result
+      → threat tracker      (smooth noisy distance, reject spikes, derive
+                             closing speed + real-seconds TTC, hold on dropouts)
+      → policy table R1..R7  (ordered, first-match-wins → raw action 0-4;
+                             collision rules on top so safety dominates)
+      → temporal ratchet     (fast N-of-M escalation, slow release, emergency
+                             latch → committed action; one bad frame can't flip it)
+      → lateral arbitration  (steer from lanes, but only ever reduce authority)
+      → one DrivingDecision + a plain-English reason
+```
+
+The whole engine is a handful of scalar operations over the two result objects, so it adds negligible CPU on top of lane + YOLO.
+
+> **Note on distance:** a single camera cannot measure true distance. Estimates come from apparent object size and are meant for relative "is this getting closer" logic, not survey-grade measurement. The decision engine smooths these estimates and reasons about *trends* (closing vs. receding) rather than trusting any single reading.
 
 ## Project layout
 
 ```
 adas-vision/
-├── config.py            ← All tunable parameters (both modules)
-├── lane_detection.py    ← Module 1: LaneDetector
-├── object_detection.py  ← Module 2: ObjectDetector (YOLOv8n)
-├── main.py              ← CLI entry point: runs both modules together
+├── config.py            ← All tunable parameters (all three modules)
+├── lane_detection.py    ← Module 1: LaneDetector       (classical CV)
+├── object_detection.py  ← Module 2: ObjectDetector      (YOLOv8n)
+├── decision_engine.py   ← Module 3: DecisionEngine      (fusion + arbitration)
+├── main.py              ← CLI entry point: runs all three modules together
 └── requirements.txt
 ```
 
@@ -65,9 +90,7 @@ adas-vision/
 pip install -r requirements.txt
 ```
 
-That's it — only OpenCV and NumPy.
-
-On first run, YOLOv8n weights (~6 MB) download automatically.
+This pulls in OpenCV, NumPy, and Ultralytics (which brings a CPU build of PyTorch for Module 2). On first run, YOLOv8n weights (~6 MB) download automatically. Lane detection alone needs only OpenCV + NumPy — run with `--no-objects` if you haven't installed Ultralytics yet.
 
 ## Usage
 
@@ -101,8 +124,11 @@ Controls while running:
 
 - Green lines — detected left/right lanes, with translucent lane-area fill
 - Yellow marker — computed lane centre vs. frame centre
+- Coloured boxes — detected objects (green/amber/red by risk); thicker = in your path
+- **Top-left HUD** — lane FPS, pixel offset, confidence, per-lane status, steering
+- **Top-right panel** — the fused decision: longitudinal state (colour-coded, flashes on EMERGENCY), brake bar, lateral action, nearest-in-path object with distance + TTC, and a `DEGRADED` chip when inputs are untrusted
+- **Bottom reason strip** — the one-line, rule-tagged explanation for the current action
 - Bottom bar — drift indicator (fills red on hard drift)
-- HUD — FPS, pixel offset, confidence, per-lane detection status, steering decision
 
 ## Tuning
 
@@ -114,11 +140,20 @@ Everything is in [config.py](config.py). The three settings that matter most:
 | `CANNY_LOW` / `CANNY_HIGH` | Faded markings missed (lower them) or too many edges (raise them) |
 | `SMOOTHING_ALPHA` | Lanes jittery (lower it) or slow to react in curves (raise it) |
 
+For the decision engine (Module 3), the settings that matter most:
+
+| Setting | When to change |
+|---|---|
+| `TTC_BRAKE_S` / `TTC_EMERGENCY_S` | Braking feels late (raise) or too twitchy (lower) |
+| `DIST_EMERGENCY_M` / `RISK_DISTANCE_HIGH` | Distance at which it panics vs. brakes firmly |
+| `HOLD_FRAMES` / `ESC_*` | Actions flicker (raise the debounce) or react too slowly (lower it) |
+| `VULNERABLE_CLASSES` | Which objects (pedestrians, two-wheelers, cattle) earn earlier braking |
+
 ## Roadmap
 
 - [x] **Phase 1** — Lane detection + steering suggestion
 - [x] **Phase 2** — Object detection + distance + collision warnings (YOLOv8n on CPU)
-- [ ] **Phase 3** — Decision engine fusing lanes + objects into a single driving action
+- [x] **Phase 3** — Decision engine fusing lanes + objects into a single arbitrated action, with temporal debouncing and a degraded mode
 - [ ] **Phase 4** — Indian-road robustness: unmarked lanes, mixed traffic, night driving
 
 ## Design principles

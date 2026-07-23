@@ -35,6 +35,7 @@ from pathlib import Path
 import cv2
 
 import config as cfg
+from decision_engine import DecisionEngine
 from lane_detection import LaneDetector
 
 logging.basicConfig(
@@ -91,6 +92,9 @@ def run(
         logger.error("Both modules are disabled — nothing to run.")
         sys.exit(1)
 
+    # ── Module 3: decision engine (fuses whatever modules are enabled) ─────
+    engine = DecisionEngine(frame_width=w, frame_height=h)
+
     # ── Optional writer ────────────────────────────────────────────────────
     writer = None
     if save_path:
@@ -112,40 +116,34 @@ def run(
             if not ret:
                 if isinstance(source, str):
                     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)   # loop video
+                    engine.reset()                        # fresh baseline on replay
+                    last_status = None
                     continue
                 logger.error("Camera read failed.")
                 break
 
             annotated = frame
+            lane_result = None
+            obj_result = None
             lane_center_x = None
-            steering = "N/A"
-            lane_fps = 0.0
 
             # ── Module 1: lanes ───────────────────────────────────────
             if lane_detector is not None:
                 lane_result, annotated = lane_detector.process(annotated)
                 lane_center_x = lane_result.lane_center_x
-                steering = lane_result.steering
-                lane_fps = lane_result.fps
 
             # ── Module 2: objects ─────────────────────────────────────
-            risk = "N/A"
-            nearest = None
             if object_detector is not None:
                 obj_result, annotated = object_detector.process(annotated, lane_center_x)
-                risk = obj_result.highest_risk
-                nearest = obj_result.nearest_in_path
 
-            # ── Terminal log on state change ──────────────────────────
-            status = (steering, risk, nearest.label if nearest else None)
+            # ── Module 3: fuse into one decision, then draw its HUD ────
+            decision = engine.process(lane_result, obj_result)
+            annotated = engine.draw_hud(annotated, decision)
+
+            # ── Terminal log on decision change ───────────────────────
+            status = (decision.longitudinal, decision.lateral, decision.rule_id)
             if status != last_status:
-                near_txt = (
-                    f"{nearest.label}@{nearest.distance_m:.0f}m" if nearest else "clear"
-                )
-                logger.info(
-                    f"Steering: {steering:<22} | Risk: {risk:<6} | "
-                    f"Ahead: {near_txt:<14} | LaneFPS: {lane_fps:.1f}"
-                )
+                logger.info(decision.reason)
                 last_status = status
 
             if writer:
