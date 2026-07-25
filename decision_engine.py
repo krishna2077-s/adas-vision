@@ -1,18 +1,19 @@
 """
 decision_engine.py — Module 3: the decision engine ("the brain").
 
-Phases 1 and 2 are the eyes. This module is the brain. It never touches pixels
-for perception — it reasons over the *structured results* the two perception
-modules already produce and fuses them into ONE arbitrated driving action per
-frame, plus a single human-readable reason a driver or a log would understand.
+Modules 1, 2 and 4 are the eyes and memory. This module is the brain. It never
+touches pixels for perception — it reasons over the tracked objects (Module 4)
+and the lane result (Module 1) and fuses them into ONE arbitrated driving action
+per frame, plus a single human-readable reason a driver or a log would understand.
 
 How it works (end to end, once per frame):
 
-    1. Trust check        — set valid / degraded flags from the two results.
-    2. Threat tracker     — EMA-smooth the noisy monocular distance to the
-                            nearest in-path object, reject spikes, derive a
-                            smoothed closing speed and a real-seconds TTC, and
-                            hold the hazard through brief detection dropouts.
+    1. Trust check        — set valid / degraded flags from the inputs.
+    2. Hazard selection    — pick the nearest CONFIRMED, non-advisory, in-path
+                            track. Its per-object smoothed distance / closing
+                            speed / TTC come straight from the tracker, so a
+                            hazard's kinematics stay stable even in dense traffic
+                            (no re-seeding when the closest object changes).
     3. Policy table       — an ordered, first-match-wins list of rules R1..R7
                             (collision rules on top) yields this frame's RAW
                             longitudinal level 0-4.
@@ -29,15 +30,13 @@ How it works (end to end, once per frame):
                             rule id, telemetry, and the reason string.
 
 Safety is by construction: collision rules sit at the top of the table and the
-lane path can never weaken the longitudinal decision.
-
-The engine adds negligible CPU (a handful of scalar ops, one length-5 deque, a
-few integer counters) and no new dependency beyond cv2/config already in use.
+lane path can never weaken the longitudinal decision. Only *confirmed* tracks
+influence decisions, so a one-frame false detection can never move the car.
 """
 
 import logging
 from collections import deque
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from typing import List, Optional, Tuple
 
 import cv2
@@ -53,6 +52,7 @@ logger = logging.getLogger(__name__)
 
 PROCEED, CAUTION, SLOW, BRAKE, EMERGENCY_STOP = 0, 1, 2, 3, 4
 LEVEL_NAMES = ["PROCEED", "CAUTION", "SLOW", "BRAKE", "EMERGENCY_STOP"]
+_RISK_RANK = {"LOW": 0, "MEDIUM": 1, "HIGH": 2}
 
 _LEVEL_COLORS = {
     PROCEED:        cfg.COLOR_PROCEED,
@@ -81,10 +81,12 @@ class DrivingDecision:
     reason:             str   = ""
     rule_id:            str   = "R7"
     hazard_label:       Optional[str]   = None
+    hazard_id:          Optional[int]   = None   # tracker ID of the hazard
     smoothed_distance_m: Optional[float] = None
     closing_speed_mps:  Optional[float] = None
     ttc_s:              Optional[float] = None
     hazard_side:        Optional[str]   = None   # 'LEFT' / 'RIGHT' / None
+    tracked_count:      int   = 0
     lane_confidence:    float = 0.0
     frame_index:        int   = 0
     fps:                float = 0.0
@@ -101,8 +103,11 @@ class DecisionEngine:
     Usage::
 
         engine   = DecisionEngine(frame_width=1280, frame_height=720)
-        decision = engine.process(lane_result, obj_result)   # per frame
+        decision = engine.process(lane_result, tracks)   # per frame
         annotated = engine.draw_hud(annotated, decision)
+
+    ``tracks`` is the confirmed+tentative Track list from Module 4 (or None if
+    object tracking is disabled). The engine only acts on confirmed tracks.
     """
 
     def __init__(self, frame_width: int, frame_height: int) -> None:
@@ -115,14 +120,6 @@ class DecisionEngine:
         self.down_counter = 0
         self.emergency_dwell = 0
 
-        # ── Threat tracker state ──────────────────────────────────────
-        self._tracked = False
-        self._smoothed_distance: Optional[float] = None
-        self._closing_speed = 0.0
-        self._ttc: Optional[float] = None
-        self._lost_grace = 0
-        self._hazard = None                 # last known nearest-in-path Detection
-
         # ── Timing / bookkeeping ──────────────────────────────────────
         self._prev_tick = cv2.getTickCount()
         self.frame_index = 0
@@ -131,63 +128,53 @@ class DecisionEngine:
         logger.info(f"DecisionEngine initialised ({frame_width}x{frame_height})")
 
     def reset(self) -> None:
-        """Clear all temporal state — call when a video loops back to the start
-        so the replay begins from a clean PROCEED baseline (not mid-brake)."""
+        """Clear temporal state — call when a video loops back to the start."""
         self.committed_level = PROCEED
         self.raw_history.clear()
         self.down_counter = 0
         self.emergency_dwell = 0
-        self._tracked = False
-        self._smoothed_distance = None
-        self._closing_speed = 0.0
-        self._ttc = None
-        self._lost_grace = 0
-        self._hazard = None
         self._last_decision = None
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    def process(self, lane_result, obj_result) -> DrivingDecision:
+    def process(self, lane_result, tracks) -> DrivingDecision:
         """
-        Fuse one frame of lane + object results into a driving decision.
+        Fuse one frame of lane result + object tracks into a driving decision.
 
         Either argument may be None (its module was disabled or unavailable);
         the engine degrades gracefully. If BOTH are None it holds the previous
         decision rather than inventing one.
         """
         self.frame_index += 1
-        raw_dt, dt = self._measure_dt()
+        raw_dt = self._measure_dt()             # only used for the fps trust gate
 
         # ── Validity: nothing to reason about ─────────────────────────
-        if lane_result is None and obj_result is None:
+        if lane_result is None and tracks is None:
             return self._hold_or_default()
 
-        # ── Trust / degraded flags ────────────────────────────────────
-        # fps from the UNCLAMPED dt so a real stall crosses the MIN_FPS gate.
         lane_conf = lane_result.confidence if lane_result is not None else 0.0
-        nearest = self._nearest_actionable(obj_result)
         fps = 1.0 / raw_dt if raw_dt > 1e-6 else 999.0
 
-        degraded, degraded_cause = self._assess_trust(
-            lane_result, obj_result, nearest, fps
-        )
-
-        # ── Threat tracker (updates smoothed distance / closing / TTC) ─
-        hazard = self._update_threat(nearest, dt)
+        # ── Only confirmed tracks influence decisions ─────────────────
+        confirmed = [t for t in (tracks or []) if t.confirmed]
+        hazard = self._nearest_actionable(confirmed)
+        highest_risk = self._highest_risk(confirmed)
         hazard_side = self._hazard_side(hazard)
+
+        # ── Trust / degraded flags ────────────────────────────────────
+        degraded, degraded_cause = self._assess_trust(lane_result, tracks, hazard, fps)
 
         # ── Policy table -> raw longitudinal level ────────────────────
         raw_level, rule_id, reason_core = self._evaluate_rules(
-            hazard, degraded, obj_result
+            hazard, degraded, confirmed, highest_risk
         )
 
         # ── Temporal ratchet: raw -> committed ────────────────────────
         committed = self._ratchet(raw_level, degraded)
 
         # ── Degraded floor: never claim PROCEED while blind + hazard ──
-        highest_risk = obj_result.highest_risk if obj_result is not None else "LOW"
         floored = False
         if degraded and committed < CAUTION and (
             hazard is not None or highest_risk in ("MEDIUM", "HIGH")
@@ -198,12 +185,11 @@ class DecisionEngine:
         self.emergency_dwell = self.emergency_dwell + 1 if committed == EMERGENCY_STOP else 0
 
         # ── Lateral action, safety-arbitrated ─────────────────────────
-        lateral, lateral_mag, lateral_note = self._lateral(
-            lane_result, committed, hazard_side
-        )
+        lateral, lateral_mag, lateral_note = self._lateral(lane_result, committed, hazard_side)
 
         # ── Command scalars ───────────────────────────────────────────
-        throttle, brake = self._scalars(committed)
+        ttc = hazard.ttc_s if hazard is not None else None
+        throttle, brake = self._scalars(committed, ttc)
 
         # ── Assemble the reason string (honest about WHY committed level) ──
         core_text = reason_core.split("] ", 1)[-1]
@@ -214,11 +200,9 @@ class DecisionEngine:
             rid = rule_id
             reason = reason_core
         elif committed > raw_level:
-            # Ratchet is holding a calmer-than-committed read (de-escalating slowly).
             rid = rule_id
             reason = f"[{rule_id}] {LEVEL_NAMES[committed]}: holding -- live read {core_text}"
         else:
-            # Ratchet is still confirming an escalation (raw is higher than committed).
             rid = rule_id
             reason = f"[{rule_id}] {LEVEL_NAMES[committed]}: confirming {LEVEL_NAMES[raw_level]} -- {core_text}"
 
@@ -241,11 +225,14 @@ class DecisionEngine:
             reason=reason,
             rule_id=rid,
             hazard_label=hazard.label if hazard is not None else None,
-            smoothed_distance_m=(round(self._smoothed_distance, 1)
-                                 if self._smoothed_distance is not None else None),
-            closing_speed_mps=round(self._closing_speed, 1),
-            ttc_s=round(self._ttc, 1) if self._ttc is not None else None,
+            hazard_id=hazard.id if hazard is not None else None,
+            smoothed_distance_m=(round(hazard.smoothed_distance_m, 1)
+                                 if hazard is not None and hazard.smoothed_distance_m is not None
+                                 else None),
+            closing_speed_mps=round(hazard.closing_speed_mps, 1) if hazard is not None else 0.0,
+            ttc_s=round(ttc, 1) if ttc is not None else None,
             hazard_side=hazard_side,
+            tracked_count=len(confirmed),
             lane_confidence=lane_conf,
             frame_index=self.frame_index,
             fps=fps,
@@ -257,141 +244,38 @@ class DecisionEngine:
     # Timing
     # ------------------------------------------------------------------
 
-    def _measure_dt(self) -> Tuple[float, float]:
+    def _measure_dt(self) -> float:
         """
-        Returns (raw_dt, clamped_dt) in seconds since the previous call.
-
-        raw_dt drives the fps trust gate (so a genuine stall can be *seen* —
-        the clamp would otherwise floor fps at exactly MIN_FPS and hide it).
-        clamped_dt drives the EMA / closing-speed integration (kept bounded so
-        fps jitter can't blow up the derivative).
+        Unclamped seconds since the previous call, for the fps trust gate — a
+        genuine stall must be visible (a clamp would floor fps at MIN_FPS and
+        hide it). The per-object kinematics dt lives in the tracker.
         """
         tick = cv2.getTickCount()
-        raw = (tick - self._prev_tick) / cv2.getTickFrequency()
+        dt = (tick - self._prev_tick) / cv2.getTickFrequency()
         self._prev_tick = tick
-        clamped = max(cfg.DT_CLAMP_MIN_S, min(cfg.DT_CLAMP_MAX_S, raw))
-        return raw, clamped
+        return dt
 
     # ------------------------------------------------------------------
-    # Trust / degraded assessment
+    # Hazard selection over tracks
     # ------------------------------------------------------------------
 
-    def _assess_trust(self, lane_result, obj_result, nearest, fps) -> Tuple[bool, str]:
-        """Returns (degraded, first_cause_string)."""
-        if lane_result is None:
-            return True, "object-only mode"
-        if lane_result.confidence == 0.0:
-            return True, "no lane lock -- corridor assumed frame-centre"
-        if obj_result is None:
-            return True, "lane-only mode"
-        if fps < cfg.MIN_FPS:
-            return True, f"low fps ({fps:.1f})"
-        if nearest is not None and nearest.confidence < cfg.DET_CONF_MIN:
-            return True, "low-confidence detection"
-        return False, ""
-
-    # ------------------------------------------------------------------
-    # Hazard selection
-    # ------------------------------------------------------------------
-
-    def _nearest_actionable(self, obj_result):
+    def _nearest_actionable(self, tracks):
         """
-        The nearest in-path object the COLLISION rules should act on — i.e. the
-        closest non-advisory in-path detection.
-
-        We deliberately do NOT reuse obj_result.nearest_in_path: that is the
-        class-agnostic closest in-path box, so a traffic light / stop sign
-        estimated nearer than a lead car would become the tracked hazard and
-        (being advisory) would suppress braking for the vehicle behind it.
-        Advisory signs are handled separately by rule R4, which scans every
-        detection, so excluding them here loses nothing.
+        Nearest CONFIRMED, non-advisory, in-path track — the object the
+        collision rules act on. Advisory signs (handled by R4) are excluded so
+        a foreground sign can't mask a closing vehicle behind it.
         """
-        if obj_result is None:
-            return None
         candidates = [
-            d for d in obj_result.detections
-            if d.in_path and d.label not in cfg.ADVISORY_CLASSES
+            t for t in tracks
+            if t.in_path and t.label not in cfg.ADVISORY_CLASSES
+            and t.smoothed_distance_m is not None
         ]
-        return min(candidates, key=lambda d: d.distance_m) if candidates else None
+        return min(candidates, key=lambda t: t.smoothed_distance_m) if candidates else None
 
-    # ------------------------------------------------------------------
-    # Threat tracker  (smooths distance, derives closing speed + TTC)
-    # ------------------------------------------------------------------
-
-    def _update_threat(self, nearest, dt):
-        """
-        Update the single-object threat track and return the 'effective
-        hazard' Detection to reason about this frame — the live nearest object,
-        a retained one during a brief dropout, or None.
-        """
-        if nearest is not None:
-            raw_d = nearest.distance_m
-
-            if not self._tracked:
-                # First sighting (or first frame after a reset): seed the track.
-                self._smoothed_distance = raw_d
-                self._closing_speed = 0.0
-                self._ttc = None
-                self._tracked = True
-            else:
-                prev = self._smoothed_distance
-                jump = abs(raw_d - prev)
-                if jump <= cfg.MAX_PLAUSIBLE_JUMP_M:
-                    # Plausible movement: EMA the distance, derive closing speed.
-                    self._smoothed_distance = (
-                        cfg.DIST_EMA_ALPHA * raw_d
-                        + (1.0 - cfg.DIST_EMA_ALPHA) * prev
-                    )
-                    inst_v = (prev - self._smoothed_distance) / dt   # + = approaching
-                    self._closing_speed = (
-                        cfg.CLOSING_EMA_ALPHA * inst_v
-                        + (1.0 - cfg.CLOSING_EMA_ALPHA) * self._closing_speed
-                    )
-                    self._closing_speed = max(
-                        -cfg.VCLOSE_CLAMP_MPS, min(cfg.VCLOSE_CLAMP_MPS, self._closing_speed)
-                    )
-                else:
-                    # Spike or object-identity switch: step toward the reading by
-                    # a bounded amount and drop the closing estimate to zero. The
-                    # jump usually means nearest_in_path swapped to a different
-                    # physical object, so any closing speed derived across the two
-                    # would be fiction — and (with TTC below) it must not fabricate
-                    # a phantom time-to-collision. Closing rebuilds once distance
-                    # settles back into the plausible band.
-                    step = min(cfg.MAX_DIST_STEP_M, jump)
-                    self._smoothed_distance = prev + step if raw_d > prev else prev - step
-                    self._closing_speed = 0.0
-
-            self._ttc = (
-                self._smoothed_distance / self._closing_speed
-                if self._closing_speed > cfg.MIN_CLOSING_MPS else None
-            )
-            self._lost_grace = 0
-            self._hazard = nearest
-            return nearest
-
-        # nearest is None ---------------------------------------------------
-        if self._tracked and self._lost_grace < cfg.OBJECT_LOST_GRACE_FRAMES:
-            # Brief dropout: keep the track *state* alive (decay distance "away",
-            # so a reappearing object doesn't re-seed and spike the closing speed)
-            # but return NO hazard to the rule table. This matters: grace must not
-            # manufacture escalation evidence — one spurious detection followed by
-            # grace frames must never satisfy the N-of-M escalation debounce. An
-            # already-committed brake is instead held by the ratchet's down-counter
-            # (HOLD_FRAMES), which is a strictly stronger hold than this window.
-            self._lost_grace += 1
-            self._smoothed_distance += cfg.CLEAR_RATE_MPS * dt
-            self._closing_speed = 0.0
-            self._ttc = None
-            return None
-
-        # Fully lost: reset the track.
-        self._tracked = False
-        self._smoothed_distance = None
-        self._closing_speed = 0.0
-        self._ttc = None
-        self._hazard = None
-        return None
+    def _highest_risk(self, tracks) -> str:
+        if not tracks:
+            return "LOW"
+        return max((t.risk for t in tracks), key=lambda r: _RISK_RANK.get(r, 0))
 
     def _hazard_side(self, hazard) -> Optional[str]:
         """Which side of frame-centre the hazard sits on ('LEFT'/'RIGHT'/None)."""
@@ -404,22 +288,33 @@ class DecisionEngine:
         return "LEFT" if hx < cx else "RIGHT"
 
     # ------------------------------------------------------------------
+    # Trust / degraded assessment
+    # ------------------------------------------------------------------
+
+    def _assess_trust(self, lane_result, tracks, hazard, fps) -> Tuple[bool, str]:
+        """Returns (degraded, first_cause_string)."""
+        if lane_result is None:
+            return True, "object-only mode"
+        if lane_result.confidence == 0.0:
+            return True, "no lane lock -- corridor assumed frame-centre"
+        if tracks is None:
+            return True, "lane-only mode"
+        if fps < cfg.MIN_FPS:
+            return True, f"low fps ({fps:.1f})"
+        if hazard is not None and hazard.confidence < cfg.DET_CONF_MIN:
+            return True, "low-confidence detection"
+        return False, ""
+
+    # ------------------------------------------------------------------
     # Policy table  (ordered, first-match-wins -> raw longitudinal level)
     # ------------------------------------------------------------------
 
-    def _evaluate_rules(self, hazard, degraded, obj_result) -> Tuple[int, str, str]:
-        d = self._smoothed_distance
-        ttc = self._ttc
-        closing = self._closing_speed > cfg.MIN_CLOSING_MPS
-
-        detections = obj_result.detections if obj_result is not None else []
-        highest_risk = obj_result.highest_risk if obj_result is not None else "LOW"
-
+    def _evaluate_rules(self, hazard, degraded, tracks, highest_risk) -> Tuple[int, str, str]:
         # ── Rules needing the nearest actionable hazard (R1..R3) ──────
-        # `hazard` is the nearest NON-advisory in-path object (see
-        # _nearest_actionable), so collision rules always see the real threat
-        # even when a traffic light / sign sits closer in the same corridor.
         if hazard is not None:
+            d = hazard.smoothed_distance_m
+            ttc = hazard.ttc_s
+            closing = hazard.closing_speed_mps > cfg.MIN_CLOSING_MPS
             label = hazard.label
 
             ttc_margin = cfg.DEGRADED_TTC_MARGIN_S if degraded else 0.0
@@ -432,48 +327,45 @@ class DecisionEngine:
             ttc_emerg_hit = ttc is not None and ttc <= ttc_emerg and closing
             if d <= cfg.DIST_EMERGENCY_M or ttc_emerg_hit:
                 if ttc_emerg_hit:
-                    r = f"[R1] EMERGENCY_STOP: {label} {d:.1f}m in-path, TTC {ttc:.1f}s closing"
+                    r = f"[R1] EMERGENCY_STOP: {label} #{hazard.id} {d:.1f}m in-path, TTC {ttc:.1f}s closing"
                 else:
-                    r = f"[R1] EMERGENCY_STOP: {label} {d:.1f}m in-path"
+                    r = f"[R1] EMERGENCY_STOP: {label} #{hazard.id} {d:.1f}m in-path"
                 return EMERGENCY_STOP, "R1", r
 
             # R2 — BRAKE (closing fast)
             if ttc is not None and ttc <= ttc_brake and closing:
                 vuln = " (vulnerable, early brake)" if label in cfg.VULNERABLE_CLASSES else ""
-                return BRAKE, "R2", f"[R2] BRAKE: {label} closing, {d:.1f}m TTC {ttc:.1f}s{vuln}"
+                return BRAKE, "R2", f"[R2] BRAKE: {label} #{hazard.id} closing, {d:.1f}m TTC {ttc:.1f}s{vuln}"
 
             # R3 — BRAKE (static HIGH-risk object dead ahead)
             if hazard.risk == "HIGH" and d <= cfg.RISK_DISTANCE_HIGH:
-                return BRAKE, "R3", f"[R3] BRAKE: {label} {d:.1f}m in-path (HIGH)"
+                return BRAKE, "R3", f"[R3] BRAKE: {label} #{hazard.id} {d:.1f}m in-path (HIGH)"
 
         # ── R4 — SLOW for an in-path traffic control (advisory ease) ──
         # We only EASE, never stop hard: Module 2 reports no light colour.
         advisory_hit = None
-        for det in detections:
-            if (det.in_path and det.label in cfg.ADVISORY_CLASSES
-                    and det.distance_m <= cfg.STOPSIGN_DISTANCE_M):
-                if advisory_hit is None or det.distance_m < advisory_hit.distance_m:
-                    advisory_hit = det
+        for t in tracks:
+            if (t.in_path and t.label in cfg.ADVISORY_CLASSES
+                    and t.smoothed_distance_m is not None
+                    and t.smoothed_distance_m <= cfg.STOPSIGN_DISTANCE_M):
+                if advisory_hit is None or t.smoothed_distance_m < advisory_hit.smoothed_distance_m:
+                    advisory_hit = t
         if advisory_hit is not None:
-            return SLOW, "R4", f"[R4] SLOW: {advisory_hit.label} {advisory_hit.distance_m:.0f}m ahead"
+            return SLOW, "R4", f"[R4] SLOW: {advisory_hit.label} {advisory_hit.smoothed_distance_m:.0f}m ahead"
 
         # ── R5 — SLOW for a MEDIUM-risk in-path object ────────────────
         if hazard is not None:
             margin = cfg.DEGRADED_DIST_MARGIN_M if degraded else 0.0
-            if hazard.risk == "MEDIUM" and d <= cfg.RISK_DISTANCE_MEDIUM + margin:
-                return SLOW, "R5", f"[R5] SLOW: {hazard.label} {d:.1f}m in-path (MEDIUM)"
+            if hazard.risk == "MEDIUM" and hazard.smoothed_distance_m <= cfg.RISK_DISTANCE_MEDIUM + margin:
+                return SLOW, "R5", f"[R5] SLOW: {hazard.label} #{hazard.id} {hazard.smoothed_distance_m:.1f}m in-path (MEDIUM)"
 
         # ── R6 — CAUTION (gentle in-path closing, or any nearby risk) ─
-        # Reaching here means no in-path rule fired above, so the tracked
-        # hazard (if any) is benign. Still ease off if it is gently closing, or
-        # if ANY object anywhere carries MEDIUM/HIGH risk (e.g. a pedestrian off
-        # to the side — which must not be ignored just because a far car is ahead).
-        if hazard is not None and closing and ttc is not None:
+        if hazard is not None and hazard.ttc_s is not None and hazard.closing_speed_mps > cfg.MIN_CLOSING_MPS:
             ttc_margin = cfg.DEGRADED_TTC_MARGIN_S if degraded else 0.0
             if hazard.label in cfg.VULNERABLE_CLASSES:
                 ttc_margin += cfg.VULNERABLE_TTC_MARGIN_S
-            if (cfg.TTC_BRAKE_S + ttc_margin) < ttc <= (cfg.TTC_CAUTION_S + ttc_margin):
-                return CAUTION, "R6", f"[R6] CAUTION: {hazard.label} closing gently, TTC {ttc:.1f}s"
+            if (cfg.TTC_BRAKE_S + ttc_margin) < hazard.ttc_s <= (cfg.TTC_CAUTION_S + ttc_margin):
+                return CAUTION, "R6", f"[R6] CAUTION: {hazard.label} #{hazard.id} closing gently, TTC {hazard.ttc_s:.1f}s"
         if highest_risk in ("MEDIUM", "HIGH"):
             return CAUTION, "R6", f"[R6] CAUTION: {highest_risk.lower()}-risk object nearby"
 
@@ -502,12 +394,9 @@ class DecisionEngine:
         committed = self.committed_level
 
         if raw_level > committed:
-            # Any read hotter than the committed level breaks the calm streak,
-            # even if it is not yet confirmed enough to escalate — otherwise a
-            # lone spike between calm frames would let a brake release on
-            # non-consecutive calm frames.
+            # Any hotter-than-committed read breaks the calm streak, even if not
+            # yet confirmed enough to escalate.
             self.down_counter = 0
-            # Escalate to the highest level in (committed, raw] confirmed N-of-M.
             target = committed
             for lvl in range(committed + 1, raw_level + 1):
                 n, m = self._esc_requirement(lvl)
@@ -541,12 +430,9 @@ class DecisionEngine:
         against the longitudinal decision. Lanes can only ever *reduce* lateral
         authority — never raise throttle or lower the brake.
         """
-        # No trustworthy lane lock -> hold the wheel.
         if lane_result is None or lane_result.confidence == 0.0:
             return "HOLD", "NONE", None
 
-        # Direction + magnitude straight from the offset (same thresholds as
-        # Module 1's steering word, so they always agree).
         offset = lane_result.offset_px
         a = abs(offset)
         if a < cfg.STEER_THRESHOLD_SLIGHT:
@@ -561,19 +447,15 @@ class DecisionEngine:
                 mag = "HARD"
 
         note = None
-
-        # Emergency braking: go straight, hold the wheel.
         if committed == EMERGENCY_STOP:
             return "HOLD", "NONE", "straight-line braking"
 
-        # Braking: never steer *toward* the hazard (evasion away is allowed).
         if committed >= BRAKE and action != "KEEP_LANE":
             toward = ((action == "CORRECT_LEFT" and hazard_side == "LEFT")
                       or (action == "CORRECT_RIGHT" and hazard_side == "RIGHT"))
             if toward:
                 return "HOLD", "NONE", "lateral inhibited: correction toward hazard"
 
-        # Slowing or harder: cap the aggressiveness of any correction.
         if committed >= SLOW and mag in ("MODERATE", "HARD"):
             mag = "SLIGHT"
 
@@ -583,7 +465,7 @@ class DecisionEngine:
     # Command scalars
     # ------------------------------------------------------------------
 
-    def _scalars(self, level: int) -> Tuple[float, float]:
+    def _scalars(self, level: int, ttc: Optional[float]) -> Tuple[float, float]:
         """Map a committed level to (throttle, brake) in 0.0-1.0."""
         if level == PROCEED:
             return 1.0, 0.0
@@ -592,9 +474,8 @@ class DecisionEngine:
         if level == SLOW:
             return 0.0, cfg.BRAKE_SLOW
         if level == BRAKE:
-            if self._ttc is not None and self._ttc > 0:
-                b = 1.0 - self._ttc / cfg.TTC_BRAKE_S
-                b = max(cfg.BRAKE_MIN, min(cfg.BRAKE_MAX, b))
+            if ttc is not None and ttc > 0:
+                b = max(cfg.BRAKE_MIN, min(cfg.BRAKE_MAX, 1.0 - ttc / cfg.TTC_BRAKE_S))
             else:
                 b = cfg.BRAKE_MIN
             return 0.0, b
@@ -639,9 +520,7 @@ class DecisionEngine:
         y0 = 10
 
         # On narrow frames the right-anchored panel would sit on top of the
-        # centred Forward Collision Warning banner (top ~6..50) and, being an
-        # opaque fill, hide it. Drop the panel below the banner band in that case
-        # — never let the decision panel occlude the collision warning.
+        # centred Forward Collision Warning banner and hide it — drop it below.
         banner_left = self.w // 2 - 240
         if x0 < banner_left + 480:
             y0 = 58
@@ -667,21 +546,22 @@ class DecisionEngine:
         cv2.putText(frame, f"LAT   {arrow} {d.lateral} {d.lateral_magnitude}",
                     (x0 + 12, y0 + 84), cv2.FONT_HERSHEY_SIMPLEX, 0.5, lat_color, 1, cv2.LINE_AA)
 
-        # ── Nearest-in-path summary ───────────────────────────────────
+        # ── Nearest-in-path summary (with tracker ID) ─────────────────
         if d.hazard_label:
             dist = f"{d.smoothed_distance_m:.0f}m" if d.smoothed_distance_m is not None else "--"
             ttc = f"{d.ttc_s:.1f}s" if d.ttc_s is not None else "--"
             trend = "^" if (d.closing_speed_mps or 0) > cfg.MIN_CLOSING_MPS else "v"
-            ahead = f"AHEAD {d.hazard_label} {dist} TTC {ttc} {trend}"
+            ident = f"#{d.hazard_id} " if d.hazard_id is not None else ""
+            ahead = f"AHEAD {ident}{d.hazard_label} {dist} TTC {ttc} {trend}"
         else:
             ahead = "AHEAD  clear"
         cv2.putText(frame, ahead, (x0 + 12, y0 + 106),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.48, (200, 200, 200), 1, cv2.LINE_AA)
 
-        # ── Telemetry line ────────────────────────────────────────────
+        # ── Telemetry line (closing speed, fps, tracked count) ────────
         v = d.closing_speed_mps if d.closing_speed_mps is not None else 0.0
-        cv2.putText(frame, f"v {v:+.1f} m/s   fps {d.fps:.0f}", (x0 + 12, y0 + 128),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (160, 160, 160), 1, cv2.LINE_AA)
+        cv2.putText(frame, f"v {v:+.1f} m/s  fps {d.fps:.0f}  trk {d.tracked_count}",
+                    (x0 + 12, y0 + 128), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (160, 160, 160), 1, cv2.LINE_AA)
 
         # ── DEGRADED / INVALID chips ──────────────────────────────────
         if d.degraded and d.frame_index % 2 == 0:

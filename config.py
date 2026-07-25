@@ -174,16 +174,17 @@ TTC_CAUTION_S       = 4.0    # in-path TTC below this -> CAUTION (gentle closing
 MIN_CLOSING_MPS     = 0.3    # below this closing speed, TTC is undefined (receding)
 STOPSIGN_DISTANCE_M = 25.0   # in-path stop sign / light within this range -> SLOW
 
-# --- Threat tracker (smooths the noisy monocular distance) ------------------
+# --- Per-object kinematics smoothing ----------------------------------------
+# Used by the Module 4 tracker to smooth each track's noisy monocular distance
+# and derive its closing speed + TTC. (Brief detection dropouts are handled by
+# the tracker's coast/max-age lifecycle, see Module 4 below.)
 DIST_EMA_ALPHA       = 0.4   # EMA weight on new distance sample (higher = snappier)
 CLOSING_EMA_ALPHA    = 0.5   # EMA weight on derived closing speed
-MAX_PLAUSIBLE_JUMP_M = 8.0   # frame-to-frame jump above this = spike / object swap
+MAX_PLAUSIBLE_JUMP_M = 8.0   # frame-to-frame jump above this = monocular spike
 MAX_DIST_STEP_M      = 3.0   # max distance step applied when a spike is rejected
 VCLOSE_CLAMP_MPS     = 40.0  # clamp on smoothed closing-speed magnitude
 DT_CLAMP_MIN_S       = 0.02  # clamp on measured per-frame dt (survives fps jitter)
 DT_CLAMP_MAX_S       = 0.5
-OBJECT_LOST_GRACE_FRAMES = 5 # frames a hazard is retained after it briefly vanishes
-CLEAR_RATE_MPS       = 8.0   # rate the retained distance decays "away" during grace
 
 # --- Temporal ratchet (debounce so one bad frame can't flip the action) -----
 # (N, M): the rule for a level must fire in N of the last M frames to escalate
@@ -232,3 +233,20 @@ COLOR_DEGRADED  = (0, 215, 255)   # yellow
 
 # --- Module toggle ----------------------------------------------------------
 ENABLE_DECISION_ENGINE = True
+
+# ===========================================================================
+# MODULE 4 — Multi-object tracker (stable IDs + per-object kinematics)
+# ===========================================================================
+# Gives each detected object a stable identity across frames so the decision
+# engine can follow specific objects (steadier decisions in dense traffic)
+# instead of re-deriving everything from a flickering "nearest" box.
+
+TRACK_IOU_MIN  = 0.30   # min IoU to associate a detection with an existing track
+TRACK_MAX_AGE  = 5      # frames a track may coast (unmatched) before it is dropped
+TRACK_MIN_HITS = 3      # detections before a track is 'confirmed' — rejects 1-frame ghosts
+TRACK_BBOX_EMA = 0.5    # EMA weight smoothing each track's bounding box
+
+COLOR_TRACK_ID = (255, 255, 255)   # track-ID tag colour (BGR)
+
+# --- Module toggle ----------------------------------------------------------
+ENABLE_TRACKING = True

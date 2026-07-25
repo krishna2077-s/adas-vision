@@ -37,6 +37,7 @@ import cv2
 import config as cfg
 from decision_engine import DecisionEngine
 from lane_detection import LaneDetector
+from tracker import MultiObjectTracker
 
 logging.basicConfig(
     level=logging.INFO,
@@ -92,6 +93,9 @@ def run(
         logger.error("Both modules are disabled — nothing to run.")
         sys.exit(1)
 
+    # ── Module 4: multi-object tracker (stable IDs; only if objects are on) ─
+    tracker = MultiObjectTracker() if enable_objects else None
+
     # ── Module 3: decision engine (fuses whatever modules are enabled) ─────
     engine = DecisionEngine(frame_width=w, frame_height=h)
 
@@ -117,6 +121,8 @@ def run(
                 if isinstance(source, str):
                     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)   # loop video
                     engine.reset()                        # fresh baseline on replay
+                    if tracker is not None:
+                        tracker.reset()
                     last_status = None
                     continue
                 logger.error("Camera read failed.")
@@ -125,6 +131,7 @@ def run(
             annotated = frame
             lane_result = None
             obj_result = None
+            tracks = None
             lane_center_x = None
 
             # ── Module 1: lanes ───────────────────────────────────────
@@ -136,8 +143,13 @@ def run(
             if object_detector is not None:
                 obj_result, annotated = object_detector.process(annotated, lane_center_x)
 
+            # ── Module 4: track objects across frames (stable IDs) ────
+            if tracker is not None:
+                tracks = tracker.update(obj_result.detections)
+                annotated = tracker.annotate(annotated, tracks)
+
             # ── Module 3: fuse into one decision, then draw its HUD ────
-            decision = engine.process(lane_result, obj_result)
+            decision = engine.process(lane_result, tracks)
             annotated = engine.draw_hud(annotated, decision)
 
             # ── Terminal log on decision change ───────────────────────

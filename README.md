@@ -2,7 +2,7 @@
 
 An open, low-cost Advanced Driver Assistance System built to run on hardware people already own — a dashcam or webcam and a standard laptop CPU. No GPU, no cloud, no dedicated hardware.
 
-**Phases 1–3 (this release): real-time lane detection with steering suggestions, object detection with collision warnings, and a decision engine that fuses both into a single arbitrated driving action every frame.**
+**Phases 1–4 (this release): real-time lane detection with steering suggestions, object detection with collision warnings, multi-object tracking with stable IDs, and a decision engine that fuses it all into a single arbitrated driving action every frame.**
 
 ## What it does
 
@@ -18,8 +18,13 @@ An open, low-cost Advanced Driver Assistance System built to run on hardware peo
 - Determines which objects are in the vehicle's forward path (perspective-aware corridor)
 - Assigns LOW / MEDIUM / HIGH risk and raises a Forward Collision Warning banner
 
+**Object tracking (Module 4)**
+- Gives each detected object a **stable ID** across frames (greedy-IoU association, no extra dependencies)
+- Maintains *per-object* smoothed distance, closing speed, and time-to-collision — so a hazard's kinematics stay stable even in dense traffic where the closest object keeps changing
+- Confirms a track only after it's seen several frames (one-frame false detections never influence the car) and coasts it through brief dropouts
+
 **Decision engine (Module 3) — the brain**
-- Fuses the two modules' *results* (never pixels) into one arbitrated action per frame
+- Fuses the lane result + confirmed tracks (never pixels) into one arbitrated action per frame
 - **Longitudinal**: `PROCEED → CAUTION → SLOW → BRAKE → EMERGENCY_STOP`, driven by the nearest in-path hazard, its estimated distance, and a smoothed closing speed / time-to-collision
 - **Lateral**: `KEEP_LANE / CORRECT_LEFT / CORRECT_RIGHT / HOLD`, taken from the lane offset but *safety-clamped* — it never steers toward a hazard and never overrides braking
 - **Temporal debouncing** so a single noisy frame (one spurious box, one distance spike, one dropped lane) can't flip the action: escalation is fast, release is slow, and an emergency stop latches
@@ -54,12 +59,21 @@ Frame → YOLOv8n detection (COCO classes, filtered to road-relevant)
 
 Module 2 uses the lane centre from Module 1 to decide what counts as "in front of us," so the two modules genuinely cooperate rather than just sharing a window.
 
+**Module 4** — multi-object tracking (a stripped-down SORT, no dependencies):
+
+```
+Detections → greedy IoU association to existing tracks (nearest overlap wins)
+           → per-track EMA distance + closing speed + TTC (spike-rejected)
+           → lifecycle: confirm after N hits, coast up to MAX_AGE frames
+           → stable Track objects (each keeps its own ID + kinematics)
+```
+
 **Module 3** — sensor fusion + arbitration, an explainable rule engine (no neural network):
 
 ```
-Lane result + Object result
-      → threat tracker      (smooth noisy distance, reject spikes, derive
-                             closing speed + real-seconds TTC, hold on dropouts)
+Lane result + confirmed tracks
+      → pick nearest actionable track  (non-advisory, in-path; its kinematics
+                                        already smoothed by Module 4)
       → policy table R1..R7  (ordered, first-match-wins → raw action 0-4;
                              collision rules on top so safety dominates)
       → temporal ratchet     (fast N-of-M escalation, slow release, emergency
@@ -68,7 +82,7 @@ Lane result + Object result
       → one DrivingDecision + a plain-English reason
 ```
 
-The whole engine is a handful of scalar operations over the two result objects, so it adds negligible CPU on top of lane + YOLO.
+Because tracking owns the per-object smoothing, the engine is just a handful of scalar operations over the tracks, so it adds negligible CPU on top of lane + YOLO.
 
 > **Note on distance:** a single camera cannot measure true distance. Estimates come from apparent object size and are meant for relative "is this getting closer" logic, not survey-grade measurement. The decision engine smooths these estimates and reasons about *trends* (closing vs. receding) rather than trusting any single reading.
 
@@ -77,10 +91,11 @@ The whole engine is a handful of scalar operations over the two result objects, 
 ```
 adas-vision/
 ├── config.py            ← All tunable parameters (all three modules)
-├── lane_detection.py    ← Module 1: LaneDetector       (classical CV)
-├── object_detection.py  ← Module 2: ObjectDetector      (YOLOv8n)
-├── decision_engine.py   ← Module 3: DecisionEngine      (fusion + arbitration)
-├── main.py              ← CLI entry point: runs all three modules together
+├── lane_detection.py    ← Module 1: LaneDetector         (classical CV)
+├── object_detection.py  ← Module 2: ObjectDetector        (YOLOv8n)
+├── tracker.py           ← Module 4: MultiObjectTracker    (stable IDs + kinematics)
+├── decision_engine.py   ← Module 3: DecisionEngine        (fusion + arbitration)
+├── main.py              ← CLI entry point: runs all four modules together
 └── requirements.txt
 ```
 
@@ -125,8 +140,9 @@ Controls while running:
 - Green lines — detected left/right lanes, with translucent lane-area fill
 - Yellow marker — computed lane centre vs. frame centre
 - Coloured boxes — detected objects (green/amber/red by risk); thicker = in your path
+- `#id` tags — the stable tracker ID on each confirmed object (watch it stay on the same object)
 - **Top-left HUD** — lane FPS, pixel offset, confidence, per-lane status, steering
-- **Top-right panel** — the fused decision: longitudinal state (colour-coded, flashes on EMERGENCY), brake bar, lateral action, nearest-in-path object with distance + TTC, and a `DEGRADED` chip when inputs are untrusted
+- **Top-right panel** — the fused decision: longitudinal state (colour-coded, flashes on EMERGENCY), brake bar, lateral action, nearest-in-path object (with its `#id`, distance + TTC), live tracked count, and a `DEGRADED` chip when inputs are untrusted
 - **Bottom reason strip** — the one-line, rule-tagged explanation for the current action
 - Bottom bar — drift indicator (fills red on hard drift)
 
@@ -154,7 +170,8 @@ For the decision engine (Module 3), the settings that matter most:
 - [x] **Phase 1** — Lane detection + steering suggestion
 - [x] **Phase 2** — Object detection + distance + collision warnings (YOLOv8n on CPU)
 - [x] **Phase 3** — Decision engine fusing lanes + objects into a single arbitrated action, with temporal debouncing and a degraded mode
-- [ ] **Phase 4** — Indian-road robustness: unmarked lanes, mixed traffic, night driving
+- [x] **Phase 4** — Multi-object tracking: stable IDs + per-object kinematics for steadier decisions in dense traffic
+- [ ] **Phase 5** — Indian-road robustness: unmarked/faded lanes, night driving, India-specific classes (auto-rickshaws, cattle)
 
 ## Design principles
 
