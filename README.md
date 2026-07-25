@@ -2,15 +2,26 @@
 
 An open, low-cost Advanced Driver Assistance System built to run on hardware people already own — a dashcam or webcam and a standard laptop CPU. No GPU, no cloud, no dedicated hardware.
 
-**Phases 1–4 (this release): real-time lane detection with steering suggestions, object detection with collision warnings, multi-object tracking with stable IDs, and a decision engine that fuses it all into a single arbitrated driving action every frame.**
+**Phases 1–5 (this release): hybrid road guidance (painted lanes + drivable-surface following for unmarked roads), object detection with collision warnings, multi-object tracking with stable IDs, and a decision engine that fuses it all into a single arbitrated driving action every frame.**
+
+> **Safety notice:** this is an *advisory / research* system. It must never be
+> connected to a vehicle's steering, throttle, or brakes. A CPU vision system
+> will sometimes be confidently wrong; treat its output as an overlay and
+> warning layer only.
 
 ## What it does
 
-**Lane detection (Module 1)**
-- Detects lane markings from dashcam footage or a live webcam in real time
-- Calculates the vehicle's drift from lane centre every frame
-- Outputs a live steering suggestion (`STRAIGHT`, `SLIGHT LEFT`, `MODERATE RIGHT`, `HARD LEFT`, ...)
-- Reports a confidence score and explicitly says so when it cannot see lanes
+**Lane detection (Module 1) — painted markings**
+- Detects lane paint (white/yellow-gated edges) in real time — kerbs, walls and embankments can't masquerade as lanes
+- Geometry sanity check rejects implausible pairs (crossed "tent" lines, absurd widths) instead of trusting them
+- Calculates drift from lane centre and outputs a steering suggestion (`STRAIGHT`, `SLIGHT LEFT`, ...)
+- **Fails honestly**: no usable paint → confidence 0 → hands over to Module 1b
+
+**Road-surface following (Module 1b) — unmarked roads**
+- Most Indian rural and hill roads have no markings — this module detects the **drivable road surface itself** (smooth + grey + connected to the patch ahead of the car)
+- Builds a **curved centreline** per frame, so bends and hilly roads are followed naturally
+- Guidance is capped at confidence 0.5 and labelled `ROAD-FOLLOW (estimated)` — honest about being less precise than paint
+- Reports *no guidance* (degraded) when not enough road is visible, rather than guessing
 
 **Object detection (Module 2)**
 - Detects road-relevant objects with YOLOv8n — cars, trucks, buses, pedestrians, two-wheelers, animals
@@ -91,7 +102,8 @@ Because tracking owns the per-object smoothing, the engine is just a handful of 
 ```
 adas-vision/
 ├── config.py            ← All tunable parameters (all three modules)
-├── lane_detection.py    ← Module 1: LaneDetector         (classical CV)
+├── lane_detection.py    ← Module 1: LaneDetector          (painted markings)
+├── road_detection.py    ← Module 1b: RoadDetector         (unmarked-road surface following)
 ├── object_detection.py  ← Module 2: ObjectDetector        (YOLOv8n)
 ├── tracker.py           ← Module 4: MultiObjectTracker    (stable IDs + kinematics)
 ├── decision_engine.py   ← Module 3: DecisionEngine        (fusion + arbitration)
@@ -171,7 +183,8 @@ For the decision engine (Module 3), the settings that matter most:
 - [x] **Phase 2** — Object detection + distance + collision warnings (YOLOv8n on CPU)
 - [x] **Phase 3** — Decision engine fusing lanes + objects into a single arbitrated action, with temporal debouncing and a degraded mode
 - [x] **Phase 4** — Multi-object tracking: stable IDs + per-object kinematics for steadier decisions in dense traffic
-- [ ] **Phase 5** — Indian-road robustness: unmarked/faded lanes, night driving, India-specific classes (auto-rickshaws, cattle)
+- [x] **Phase 5** — Unmarked-road guidance: hybrid paint + drivable-surface following (validated on hill, city and highway footage)
+- [ ] **Phase 6** — Learned drivable-area segmentation (needs edge-GPU hardware, e.g. Jetson) + night driving
 
 ## Design principles
 

@@ -82,6 +82,7 @@ class LaneDetector:
         # Smoothed lane endpoints (floats, cast to int for drawing)
         self._smooth_left:  Optional[np.ndarray] = None   # [x1,y1,x2,y2]
         self._smooth_right: Optional[np.ndarray] = None
+        self._miss = {"left": 0, "right": 0}   # consecutive frames each lane was missing
 
         # FPS tracking
         self._prev_tick = cv2.getTickCount()
@@ -109,6 +110,13 @@ class LaneDetector:
         gray    = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         blurred = cv2.GaussianBlur(gray, cfg.BLUR_KERNEL_SIZE, 0)
         edges   = cv2.Canny(blurred, cfg.CANNY_LOW, cfg.CANNY_HIGH)
+
+        # ── 1b. Lane-marking colour gate ──────────────────────────────
+        # Keep only edges sitting on white / yellow paint, so kerbs, walls,
+        # embankments and tree lines can't masquerade as lanes. No paint ->
+        # no edges survive -> the frame honestly reports "no lane".
+        if cfg.LANE_REQUIRE_MARKINGS:
+            edges = cv2.bitwise_and(edges, self._marking_mask(frame))
 
         # ── 2. ROI mask ───────────────────────────────────────────────
         masked = self._apply_roi(edges)
@@ -163,6 +171,20 @@ class LaneDetector:
         mask = np.zeros_like(edges)
         cv2.fillPoly(mask, self._roi_polygon, 255)
         return cv2.bitwise_and(edges, mask)
+
+    def _marking_mask(self, frame: np.ndarray) -> np.ndarray:
+        """
+        Binary mask of likely lane paint: bright low-saturation 'white' plus a
+        yellow band, dilated so the Canny edges *at* a marking's border fall
+        inside it. AND-ing with the edge map keeps only marking edges, so the
+        detector locks onto paint — not grey concrete kerbs or bright road.
+        """
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        white  = cv2.inRange(hsv, (0, 0, cfg.WHITE_V_MIN), (179, cfg.WHITE_S_MAX, 255))
+        yellow = cv2.inRange(hsv, cfg.YELLOW_HSV_LOW, cfg.YELLOW_HSV_HIGH)
+        mask = cv2.bitwise_or(white, yellow)
+        k = np.ones((cfg.MARKING_DILATE, cfg.MARKING_DILATE), np.uint8)
+        return cv2.dilate(mask, k)
 
     # ------------------------------------------------------------------
     # Line processing
@@ -256,6 +278,7 @@ class LaneDetector:
         alpha = cfg.SMOOTHING_ALPHA
 
         if lane is not None:
+            self._miss[side] = 0
             current = np.array([lane.x1, lane.y1, lane.x2, lane.y2], dtype=float)
             if prev is None:
                 smoothed = current
@@ -265,10 +288,14 @@ class LaneDetector:
             s = smoothed.astype(int)
             return Lane(s[0], s[1], s[2], s[3])
         else:
-            # Keep last known lane (allows brief occlusion)
-            if prev is not None:
+            # Keep the last known lane through a brief occlusion — but only
+            # briefly. A stale lane held forever would blend into a new scene
+            # and corrupt fresh detections (or ghost-steer the car).
+            self._miss[side] += 1
+            if prev is not None and self._miss[side] <= cfg.LANE_KEEP_MISSES:
                 s = prev.astype(int)
                 return Lane(s[0], s[1], s[2], s[3])
+            setattr(self, attr, None)     # discard the stale memory
             return None
 
     # ------------------------------------------------------------------
@@ -280,6 +307,17 @@ class LaneDetector:
         left: Optional[Lane],
         right: Optional[Lane],
     ) -> LaneDetectionResult:
+        # Reject a geometrically implausible pair (crossed / "tent" lines, or a
+        # lane far too wide or narrow) rather than reporting confident nonsense.
+        if left is not None and right is not None and not self._pair_is_plausible(left, right):
+            left = right = None
+
+        # A lone lane on an unmarked road is almost always a false edge (kerb /
+        # wall). Requiring both avoids a dangerous one-sided steer; instead the
+        # frame reports no lane and the decision engine goes conservative.
+        if cfg.LANE_REQUIRE_BOTH and not (left is not None and right is not None):
+            left = right = None
+
         result = LaneDetectionResult(
             left_lane      = left,
             right_lane     = right,
@@ -291,7 +329,7 @@ class LaneDetector:
         result.confidence = n_detected / 2.0
 
         if n_detected == 0:
-            result.steering = "UNKNOWN — no lanes detected"
+            result.steering = "UNKNOWN -- no lanes detected"
             return result
 
         # Lane centre = midpoint between top of left and top of right
@@ -310,6 +348,24 @@ class LaneDetector:
 
         result.steering = self._steering_decision(offset)
         return result
+
+    def _pair_is_plausible(self, left: Lane, right: Lane) -> bool:
+        """
+        True if a left/right pair forms a sane road trapezoid: left really is
+        left of right at both the ROI bottom and top (no crossing / 'tent'), the
+        two lines keep a gap at the top, and the lane is a believable width at
+        the frame bottom.
+        """
+        lb, rb = left.x1, right.x1     # x at ROI bottom
+        lt, rt = left.x2, right.x2     # x at ROI top
+        if lb >= rb:                              # crossed at bottom
+            return False
+        if rt - lt < cfg.LANE_MIN_TOP_GAP_PX:     # crossed / converged to a point (tent)
+            return False
+        width = rb - lb
+        return (cfg.LANE_MIN_BOTTOM_WIDTH_FRAC * self.w
+                <= width <=
+                cfg.LANE_MAX_BOTTOM_WIDTH_FRAC * self.w)
 
     def _steering_decision(self, offset: int) -> str:
         """Maps pixel offset to a human-readable steering command."""

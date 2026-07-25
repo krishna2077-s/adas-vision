@@ -37,6 +37,7 @@ import cv2
 import config as cfg
 from decision_engine import DecisionEngine
 from lane_detection import LaneDetector
+from road_detection import RoadDetector
 from tracker import MultiObjectTracker
 
 logging.basicConfig(
@@ -78,6 +79,10 @@ def run(
 
     # ── Initialise modules ────────────────────────────────────────────────
     lane_detector = LaneDetector(frame_width=w, frame_height=h) if enable_lanes else None
+
+    # Module 1b: road-surface fallback for unmarked roads (hills, rural).
+    road_detector = (RoadDetector(frame_width=w, frame_height=h)
+                     if enable_lanes and cfg.ENABLE_ROAD_FALLBACK else None)
 
     object_detector = None
     if enable_objects:
@@ -123,6 +128,8 @@ def run(
                     engine.reset()                        # fresh baseline on replay
                     if tracker is not None:
                         tracker.reset()
+                    if road_detector is not None:
+                        road_detector.reset()
                     last_status = None
                     continue
                 logger.error("Camera read failed.")
@@ -134,9 +141,16 @@ def run(
             tracks = None
             lane_center_x = None
 
-            # ── Module 1: lanes ───────────────────────────────────────
+            # ── Module 1: lanes (paint) → 1b: road surface fallback ───
             if lane_detector is not None:
                 lane_result, annotated = lane_detector.process(annotated)
+                if lane_result.confidence == 0.0 and road_detector is not None:
+                    # No usable paint — follow the drivable road surface
+                    # instead (estimated guidance for unmarked roads).
+                    # Detect on the RAW frame; draw onto the annotated one.
+                    road_result, annotated = road_detector.process(frame, draw_on=annotated)
+                    if road_result.confidence > 0.0:
+                        lane_result = road_result
                 lane_center_x = lane_result.lane_center_x
 
             # ── Module 2: objects ─────────────────────────────────────

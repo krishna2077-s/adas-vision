@@ -51,11 +51,72 @@ MIN_SLOPE = 0.3
 MAX_SLOPE = 2.5
 
 # ---------------------------------------------------------------------------
+# Lane-marking colour gate + honest failure
+# The straight-line detector can only trust actual painted markings. This gate
+# keeps only edges sitting on bright white / yellow paint, so kerbs, walls,
+# embankments and tree lines can't masquerade as lanes. On a road with no
+# usable paint the detector then reports NO LANE (confidence 0.0) and the
+# decision engine goes conservative (degraded) — the safe, honest behaviour,
+# instead of drawing a confident, wrong lane. Set False for the old edges-only
+# mode (marked test tracks only).
+# ---------------------------------------------------------------------------
+LANE_REQUIRE_MARKINGS = True
+WHITE_V_MIN     = 200           # min brightness for 'white' paint (0-255). Swept on real
+                                # footage: 200 recovers hazy highway paint (18/25 frames)
+                                # while unmarked hill roads still yield 0 false pairs
+                                # (geometry + require-both reject the concrete kerb).
+WHITE_S_MAX     = 45            # max saturation for white
+YELLOW_HSV_LOW  = (18, 90, 150) # HSV lower bound for yellow paint
+YELLOW_HSV_HIGH = (38, 255, 255)
+MARKING_DILATE  = 11            # px dilation of the paint mask before gating edges
+
+# Geometry sanity — reject an implausible left/right pair (crossed / 'tent'
+# lines, or a lane far too wide or narrow) instead of trusting it.
+LANE_MIN_BOTTOM_WIDTH_FRAC = 0.20   # min lane width at frame bottom (fraction of width)
+LANE_MAX_BOTTOM_WIDTH_FRAC = 0.85   # max lane width at frame bottom
+LANE_MIN_TOP_GAP_PX        = 40     # left/right must stay at least this far apart at ROI top
+
+# Require BOTH lanes (a plausible pair) before emitting guidance. A lone edge on
+# an unmarked road is almost always a false positive (a kerb or wall), and a
+# wrong one-sided steer is dangerous — so a single lane is treated as "no lane"
+# (confidence 0.0 -> decision engine goes degraded / conservative). Set False
+# only on well-marked roads where one-sided lane-keeping is wanted.
+LANE_REQUIRE_BOTH = True
+
+# ---------------------------------------------------------------------------
+# MODULE 1b — Drivable-road-surface following (fallback for unmarked roads)
+# When paint gives no lane, the road surface itself is detected (smooth +
+# grey + connected to the patch ahead of the car) and its curved centreline
+# steers the vehicle. Guidance from this path is marked ESTIMATED
+# (confidence 0.5) — surface-following is honest but less precise than paint.
+# ---------------------------------------------------------------------------
+ENABLE_ROAD_FALLBACK = True
+ROAD_DOWNSCALE        = 4      # process at 1/4 resolution (a few ms on CPU)
+ROAD_TEXTURE_STD_MAX  = 7.0    # max local intensity std for 'smooth' (asphalt)
+ROAD_CHROMA_MAX       = 30.0   # max Lab chroma for 'grey-ish' road
+ROAD_MIN_BRIGHTNESS   = 40     # darker than this = deep shadow, not trusted
+ROAD_HORIZON_FRAC     = 0.40   # ignore everything above this frame fraction
+ROAD_BONNET_FRAC      = 0.93   # ignore the bonnet below this fraction
+ROAD_SEED_Y_FRAC      = 0.88   # row of the seed strip (just ahead of the car)
+ROAD_MIN_COVERAGE     = 0.22   # min centreline row coverage to trust the road
+                               # (narrow hill roads legitimately show few rows
+                               # ahead at a crest or hairpin; 0.22 ~= the
+                               # ROAD_MIN_ROWS floor, keeping the gates consistent)
+ROAD_MIN_ROWS         = 8      # min centreline points to trust the road
+ROAD_LOOKAHEAD_FRAC   = 0.66   # centreline point used as the steering target
+ROAD_SMOOTHING_ALPHA  = 0.25   # EMA on the look-ahead x (steadier steering)
+ROAD_FILL_COLOR       = (0, 180, 0)   # BGR of the surface overlay
+ROAD_FILL_ALPHA       = 0.35
+
+# ---------------------------------------------------------------------------
 # Lane smoothing
 # Exponential moving average keeps the displayed lanes stable across frames.
 # Lower alpha = smoother but slower to react. Higher = more responsive but jittery.
 # ---------------------------------------------------------------------------
 SMOOTHING_ALPHA = 0.15
+LANE_KEEP_MISSES = 10   # frames a missing lane may be held from memory before it
+                        # is discarded — a stale "ghost lane" held forever would
+                        # blend into new scenes and corrupt fresh detections
 
 # ---------------------------------------------------------------------------
 # Steering decisions
