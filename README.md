@@ -2,7 +2,7 @@
 
 An open, low-cost Advanced Driver Assistance System built to run on hardware people already own — a dashcam or webcam and a standard laptop CPU. No GPU, no cloud, no dedicated hardware.
 
-**Phases 1–5 (this release): hybrid road guidance (painted lanes + drivable-surface following for unmarked roads), object detection with collision warnings, multi-object tracking with stable IDs, and a decision engine that fuses it all into a single arbitrated driving action every frame.**
+**This release: painted-lane detection, learned drivable-area segmentation for unmarked roads (a compact CNN trained on the full Indian Driving Dataset), object detection with collision warnings, multi-object tracking with stable IDs, and a decision engine that fuses it all into a single arbitrated driving action every frame.**
 
 > **Safety notice:** this is an *advisory / research* system. It must never be
 > connected to a vehicle's steering, throttle, or brakes. A CPU vision system
@@ -17,10 +17,17 @@ An open, low-cost Advanced Driver Assistance System built to run on hardware peo
 - Calculates drift from lane centre and outputs a steering suggestion (`STRAIGHT`, `SLIGHT LEFT`, ...)
 - **Fails honestly**: no usable paint → confidence 0 → hands over to Module 1b
 
-**Road-surface following (Module 1b) — unmarked roads**
-- Most Indian rural and hill roads have no markings — this module detects the **drivable road surface itself** (smooth + grey + connected to the patch ahead of the car)
-- Builds a **curved centreline** per frame, so bends and hilly roads are followed naturally
-- Guidance is capped at confidence 0.5 and labelled `ROAD-FOLLOW (estimated)` — honest about being less precise than paint
+**Learned road segmentation (Module 1c) — unmarked roads, primary**
+- A compact CNN (**LRASPP MobileNetV3-Large**) trained on the **full Indian Driving Dataset** (~20k images; validation drivable-IoU **0.92**) segments the drivable road surface directly
+- Handles the scenes classical CV can't — curving, hilly, unmarked forest roads — building the same **curved centreline** for steering
+- Runs on **CPU** (~4 fps at 768×432 on a laptop, the same order as YOLOv8n) — no GPU needed at run time; the GPU is only used once, for training
+- Guidance is capped (drivable-area, not paint-precise) and tagged `LEARNED ROAD (IDD)`
+- If the trained weights are absent (or PyTorch isn't installed) it steps aside to Module 1b, so the system still runs on a clean checkout
+
+**Road-surface following (Module 1b) — classical fallback**
+- The original hand-tuned detector: **drivable road surface** by texture (smooth) + colour (grey) + connectivity to the patch ahead of the car
+- Kept as the fallback when the learned model is unavailable or finds no road
+- Builds a **curved centreline** per frame; guidance capped at confidence 0.5, labelled `ROAD-FOLLOW (estimated)`
 - Reports *no guidance* (degraded) when not enough road is visible, rather than guessing
 
 **Object detection (Module 2)**
@@ -101,9 +108,10 @@ Because tracking owns the per-object smoothing, the engine is just a handful of 
 
 ```
 adas-vision/
-├── config.py            ← All tunable parameters (all three modules)
+├── config.py            ← All tunable parameters (all modules)
 ├── lane_detection.py    ← Module 1: LaneDetector          (painted markings)
-├── road_detection.py    ← Module 1b: RoadDetector         (unmarked-road surface following)
+├── learned_road_detection.py ← Module 1c: LearnedRoadDetector (CNN drivable-area, primary on unmarked roads)
+├── road_detection.py    ← Module 1b: RoadDetector         (classical surface following, fallback)
 ├── object_detection.py  ← Module 2: ObjectDetector        (YOLOv8n)
 ├── tracker.py           ← Module 4: MultiObjectTracker    (stable IDs + kinematics)
 ├── decision_engine.py   ← Module 3: DecisionEngine        (fusion + arbitration)
@@ -117,7 +125,9 @@ adas-vision/
 pip install -r requirements.txt
 ```
 
-This pulls in OpenCV, NumPy, and Ultralytics (which brings a CPU build of PyTorch for Module 2). On first run, YOLOv8n weights (~6 MB) download automatically. Lane detection alone needs only OpenCV + NumPy — run with `--no-objects` if you haven't installed Ultralytics yet.
+This pulls in OpenCV, NumPy, Ultralytics (which brings a CPU build of PyTorch for Module 2), and torchvision (for Module 1c). On first run, YOLOv8n weights (~6 MB) download automatically. Lane detection alone needs only OpenCV + NumPy — run with `--no-objects` if you haven't installed Ultralytics yet.
+
+**Learned road model (Module 1c):** place the trained weights `drivable_idd_full_best.pth` in the repo root. They are produced by [`colab/phase6c_full_idd.ipynb`](colab/phase6c_full_idd.ipynb) (free Colab GPU) and shared via a GitHub Release rather than committed (the file is large). Without it, the system automatically falls back to the classical road detector (Module 1b) — nothing breaks, unmarked-road guidance is just less accurate.
 
 ## Usage
 
@@ -184,7 +194,9 @@ For the decision engine (Module 3), the settings that matter most:
 - [x] **Phase 3** — Decision engine fusing lanes + objects into a single arbitrated action, with temporal debouncing and a degraded mode
 - [x] **Phase 4** — Multi-object tracking: stable IDs + per-object kinematics for steadier decisions in dense traffic
 - [x] **Phase 5** — Unmarked-road guidance: hybrid paint + drivable-surface following (validated on hill, city and highway footage)
-- [ ] **Phase 6** — Learned drivable-area segmentation (needs edge-GPU hardware, e.g. Jetson) + night driving
+- [x] **Phase 6** — Learned drivable-area segmentation (LRASPP MobileNetV3 trained on the full IDD, val IoU 0.92) — trained free on Colab, **runs on CPU** at run time, integrated as Module 1c
+- [ ] **Phase 7** (in progress) — Stronger model: DeepLabV3-MobileNetV3 (ASPP multi-scale head) + night/fog/blur/shadow augmentation + Dice loss, targeting the haze / night / hill weak spots. `colab/phase7_deeplab_aug.ipynb`; loadable via `LEARNED_ARCH = "deeplabv3"`
+- [ ] **Phase 8** — More data (BDD100K night + weather) + edge deployment (ONNX → TensorRT on Jetson / OpenVINO on the laptop iGPU)
 
 ## Design principles
 

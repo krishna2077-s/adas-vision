@@ -109,6 +109,34 @@ ROAD_FILL_COLOR       = (0, 180, 0)   # BGR of the surface overlay
 ROAD_FILL_ALPHA       = 0.35
 
 # ---------------------------------------------------------------------------
+# MODULE 1c — Learned drivable-area road following (trained CNN)
+# LRASPP MobileNetV3-Large, trained on the full Indian Driving Dataset (IDD,
+# ~20k images; val drivable-IoU 0.92). This is the PRIMARY guidance source on
+# unmarked roads: paint (Module 1) first, this second, classical surface
+# following (Module 1b) as the fallback when the model file is absent or the
+# model finds no road. Runs on CPU via PyTorch (~4 fps at 768x432 on a laptop).
+# Guidance is capped (LEARNED_CONF_CAP) — drivable-area, not paint-precise.
+# ---------------------------------------------------------------------------
+ENABLE_LEARNED_ROAD  = True
+# Architecture must match the weights file:
+#   "lraspp"    -> LRASPP MobileNetV3      (Phase 6c, ~6 fps @768x432, drivable_idd_full_best.pth)
+#   "deeplabv3" -> DeepLabV3 MobileNetV3   (Phase 7,  ~2.6 fps @768x432, richer ASPP head + augmentation)
+LEARNED_ARCH         = "lraspp"
+LEARNED_MODEL_PATH   = "drivable_idd_full_best.pth"  # trained weights (see colab/phase6c_full_idd.ipynb)
+LEARNED_INPUT_W      = 768     # inference resolution (matches training; lower = faster, less precise)
+LEARNED_INPUT_H      = 432
+LEARNED_NUM_THREADS  = 0       # 0 = leave torch default; set to physical cores to cap CPU use
+LEARNED_HORIZON_FRAC = 0.35    # ignore rows above this (far field / sky)
+LEARNED_BONNET_FRAC  = 0.93    # ignore the bonnet below this
+LEARNED_MIN_COVERAGE = 0.20    # min centreline row coverage to trust the model
+LEARNED_MIN_ROWS     = 8       # min centreline points to trust the model
+LEARNED_LOOKAHEAD_FRAC = 0.66  # centreline point used as the steering target
+LEARNED_SMOOTHING_ALPHA = 0.25 # EMA on the look-ahead x (steadier steering)
+LEARNED_CONF_CAP     = 0.80    # cap on reported confidence (est. drivable-area, not paint)
+LEARNED_FILL_COLOR   = (200, 130, 0)  # BGR teal — distinct from classical green road fill
+LEARNED_FILL_ALPHA   = 0.40
+
+# ---------------------------------------------------------------------------
 # Lane smoothing
 # Exponential moving average keeps the displayed lanes stable across frames.
 # Lower alpha = smoother but slower to react. Higher = more responsive but jittery.

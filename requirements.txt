@@ -5,3 +5,10 @@ numpy>=1.24.0
 # ultralytics pulls in a CPU build of torch automatically.
 # yolov8n.pt (~6 MB) downloads on first run.
 ultralytics>=8.1.0
+
+# ── Module 1c: learned drivable-area segmentation ────────────────────────────
+# torch comes in via ultralytics; torchvision provides the LRASPP MobileNetV3
+# architecture. The trained weights (drivable_idd_full_best.pth) are produced by
+# colab/phase6c_full_idd.ipynb — place the .pth in the repo root. If the file is
+# absent the system falls back to the classical road detector (Module 1b).
+torchvision>=0.15.0

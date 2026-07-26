@@ -11,6 +11,12 @@ logs/
 # Downloaded model weights (auto-downloads on first run)
 *.pt
 
+# Trained segmentation weights (Module 1c) — large; produced by the Colab
+# notebook, shared via a GitHub Release rather than committed to the repo.
+*.pth
+*.onnx
+*.onnx.data
+
 # Python
 __pycache__/
 *.py[cod]

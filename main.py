@@ -80,9 +80,21 @@ def run(
     # ── Initialise modules ────────────────────────────────────────────────
     lane_detector = LaneDetector(frame_width=w, frame_height=h) if enable_lanes else None
 
-    # Module 1b: road-surface fallback for unmarked roads (hills, rural).
+    # Module 1b: classical road-surface fallback for unmarked roads (hills, rural).
     road_detector = (RoadDetector(frame_width=w, frame_height=h)
                      if enable_lanes and cfg.ENABLE_ROAD_FALLBACK else None)
+
+    # Module 1c: learned drivable-area model — the PRIMARY unmarked-road source.
+    # Falls back to Module 1b if the trained weights are absent or torch is
+    # missing, so the system still runs on a clean checkout.
+    learned_road_detector = None
+    if enable_lanes and cfg.ENABLE_LEARNED_ROAD:
+        try:
+            from learned_road_detection import LearnedRoadDetector
+            lrd = LearnedRoadDetector(frame_width=w, frame_height=h)
+            learned_road_detector = lrd if lrd.available else None
+        except ImportError as exc:
+            logger.warning(f"Learned road detection unavailable ({exc}) — using classical fallback.")
 
     object_detector = None
     if enable_objects:
@@ -130,6 +142,8 @@ def run(
                         tracker.reset()
                     if road_detector is not None:
                         road_detector.reset()
+                    if learned_road_detector is not None:
+                        learned_road_detector.reset()
                     last_status = None
                     continue
                 logger.error("Camera read failed.")
@@ -141,16 +155,24 @@ def run(
             tracks = None
             lane_center_x = None
 
-            # ── Module 1: lanes (paint) → 1b: road surface fallback ───
+            # ── Module 1: lanes (paint) → 1c: learned road → 1b: classical ───
             if lane_detector is not None:
                 lane_result, annotated = lane_detector.process(annotated)
-                if lane_result.confidence == 0.0 and road_detector is not None:
-                    # No usable paint — follow the drivable road surface
-                    # instead (estimated guidance for unmarked roads).
-                    # Detect on the RAW frame; draw onto the annotated one.
-                    road_result, annotated = road_detector.process(frame, draw_on=annotated)
-                    if road_result.confidence > 0.0:
-                        lane_result = road_result
+                if lane_result.confidence == 0.0:
+                    # No usable paint — follow the drivable road surface instead
+                    # (estimated guidance for unmarked roads). Detect on the RAW
+                    # frame; draw onto the annotated one. Prefer the learned
+                    # model; drop to the classical detector if it has no lock.
+                    got = False
+                    if learned_road_detector is not None:
+                        road_result, annotated = learned_road_detector.process(frame, draw_on=annotated)
+                        if road_result.confidence > 0.0:
+                            lane_result = road_result
+                            got = True
+                    if not got and road_detector is not None:
+                        road_result, annotated = road_detector.process(frame, draw_on=annotated)
+                        if road_result.confidence > 0.0:
+                            lane_result = road_result
                 lane_center_x = lane_result.lane_center_x
 
             # ── Module 2: objects ─────────────────────────────────────
