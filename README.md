@@ -138,7 +138,12 @@ adas-vision/
 ├── object_detection.py  ← Module 2: ObjectDetector        (YOLOv8n)
 ├── tracker.py           ← Module 4: MultiObjectTracker    (stable IDs + kinematics)
 ├── decision_engine.py   ← Module 3: DecisionEngine        (fusion + arbitration)
-├── main.py              ← CLI entry point: runs all four modules together
+├── perception_bev.py    ← Module 5: BEVProjector          (bird's-eye ego frame — sim)
+├── sensor_fusion.py     ← Module 6: SimRadarFusion        (simulated radar + fusion)
+├── prediction_planning.py ← Module 7: Planner             (prediction + advisory plan)
+├── control_sim.py       ← Module 8: SimController         (simulated steering/PID — never wired)
+├── driver_monitoring.py ← Module 9: DriverMonitor         (attention: driver-facing cam)
+├── main.py              ← CLI entry point: runs the whole pipeline together
 └── requirements.txt
 ```
 
@@ -174,6 +179,27 @@ If the `.onnx` file or `onnxruntime` is absent, the system falls back to the PyT
 
 - **ONNX doesn't help YOLOv8n on CPU.** It's a tiny, overhead-bound model (preprocessing + NMS dominate), so ONNX Runtime measured no faster than PyTorch on this hardware (unlike the road model's 2.8×). The ONNX path (`export_yolo_onnx.py`, `YOLO_BACKEND`) exists for edge/INT8 experiments but defaults to `torch`. The one CPU lever that *does* help is input resolution (`YOLO_IMGSZ`: 512 ≈ 1.3×), left at 640 by default.
 - **No frame-skip on hazards — on purpose.** The road barely moves between frames, so skipping its inference is safe. A pedestrian or vehicle can appear between *any* two frames, so object detection runs **every frame** — we never trade hazard-detection latency for speed. See the safety notice above.
+
+## Advisory simulation layers (Phase 9)
+
+Beyond perception, the repo demonstrates the *rest* of the ADAS software chain — **all simulation / advisory only, never wired to a vehicle** (see the safety notice above):
+
+- **Bird's-eye perception (Module 5, `perception_bev.py`)** — projects tracked objects into a top-down ego frame (metres), the shared space the other layers reason in.
+- **Simulated sensor fusion (Module 6, `sensor_fusion.py`)** — synthesises a noisy "radar" return and fuses it with the camera's noisy depth via an inverse-variance combine. Shows the fusion *architecture* — the radar is **simulated**, not real hardware, and adds no real-world information.
+- **Prediction & planning (Module 7, `prediction_planning.py`)** — rolls each object forward (constant-velocity) and suggests a cruise speed (time-gap logic) plus an advisory path.
+- **Simulated control (Module 8, `control_sim.py`)** — pure-pursuit steering + PID speed driving a **simulated** ego, drawn as a steering/pedal readout. **There is no hardware interface anywhere in this code, by design.**
+- **Driver monitoring (Module 9, `driver_monitoring.py`)** — a driver-facing camera + OpenCV Haar cascades estimate `ATTENTIVE / DISTRACTED / DROWSY / NO DRIVER`.
+
+```bash
+# full stack (all overlays on):
+python main.py --video dashcam.mp4
+# add driver monitoring from a second, driver-facing camera:
+python main.py --video dashcam.mp4 --driver-cam 1
+# driver monitor on its own:
+python driver_monitor_demo.py
+```
+
+> These layers exist to show the *shape* of a full ADAS in software. They do **not** make the system safe to drive with — a single camera, a best-effort CPU, simulated sensors, and no certification are exactly why it stays advisory. Re-read the safety notice above.
 
 ## Usage
 
@@ -243,6 +269,7 @@ For the decision engine (Module 3), the settings that matter most:
 - [x] **Phase 6** — Learned drivable-area segmentation (LRASPP MobileNetV3 trained on the full IDD, val IoU 0.92) — trained free on Colab, **runs on CPU** at run time, integrated as Module 1c
 - [ ] **Phase 7** (in progress) — Stronger model: DeepLabV3-MobileNetV3 (ASPP multi-scale head) + night/fog/blur/shadow augmentation + Dice loss, targeting the haze / night / hill weak spots. `colab/phase7_deeplab_aug.ipynb`; loadable via `LEARNED_ARCH = "deeplabv3"`
 - [~] **Phase 8** — Real-time inference: **ONNX Runtime CPU backend (~2.8× over PyTorch, identical output) + frame-skip (~3×)** → real-time drivable-area on a plain laptop CPU (done); next: OpenVINO on the Intel iGPU + INT8, more data (BDD100K night + weather)
+- [x] **Phase 9** — Advisory *simulation* of the full ADAS chain: bird's-eye perception, simulated sensor fusion, prediction + planning, a simulated pure-pursuit/PID controller, and driver monitoring — all overlay/simulated, **never wired to a vehicle**
 
 ## Design principles
 

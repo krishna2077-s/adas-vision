@@ -54,6 +54,7 @@ def run(
     debug: bool = False,
     enable_lanes: bool = True,
     enable_objects: bool = True,
+    driver_cam: int = None,
 ) -> None:
     """
     Main loop: reads frames, runs enabled modules, displays the combined result.
@@ -116,6 +117,36 @@ def run(
     # ── Module 3: decision engine (fuses whatever modules are enabled) ─────
     engine = DecisionEngine(frame_width=w, frame_height=h)
 
+    # ── Modules 5-9: advisory SIMULATION layers (Phase 9) ─────────────────
+    # perception BEV -> sim fusion -> prediction/planning -> sim control, plus
+    # driver monitoring. ALL advisory/simulated — never wired to a vehicle.
+    bev_projector = fusion = planner = controller = driver_monitor = None
+    driver_cap = None
+    try:
+        if cfg.ENABLE_BEV:
+            from perception_bev import BEVProjector
+            bev_projector = BEVProjector(w, h)
+        if cfg.ENABLE_FUSION:
+            from sensor_fusion import SimRadarFusion
+            fusion = SimRadarFusion()
+        if cfg.ENABLE_PLANNING:
+            from prediction_planning import Planner
+            planner = Planner(w, h)
+        if cfg.ENABLE_CONTROL_SIM:
+            from control_sim import SimController
+            controller = SimController(w, h)
+        if cfg.ENABLE_DRIVER_MON and driver_cam is not None:
+            from driver_monitoring import DriverMonitor
+            dm = DriverMonitor()
+            if dm.available:
+                cap_d = cv2.VideoCapture(driver_cam)
+                if cap_d.isOpened():
+                    driver_monitor, driver_cap = dm, cap_d
+                else:
+                    logger.warning(f"Driver cam {driver_cam} not opened — driver monitoring off.")
+    except Exception as exc:
+        logger.warning(f"Advisory-sim layers disabled ({exc}).")
+
     # ── Optional writer ────────────────────────────────────────────────────
     writer = None
     if save_path:
@@ -144,6 +175,9 @@ def run(
                         road_detector.reset()
                     if learned_road_detector is not None:
                         learned_road_detector.reset()
+                    for m in (bev_projector, fusion, planner, controller, driver_monitor):
+                        if m is not None:
+                            m.reset()
                     last_status = None
                     continue
                 logger.error("Camera read failed.")
@@ -188,6 +222,34 @@ def run(
             decision = engine.process(lane_result, tracks)
             annotated = engine.draw_hud(annotated, decision)
 
+            # ── Modules 5-9: advisory SIMULATION overlays ─────────────
+            # Bird's-eye perception -> sim fusion -> prediction/planning ->
+            # sim control, + driver monitoring. Nothing here controls a car.
+            try:
+                if bev_projector is not None:
+                    ego_objs = bev_projector.project(tracks or [])
+                    plan = None
+                    if fusion is not None:
+                        fusion.process(ego_objs)
+                    if planner is not None:
+                        ego_spd = controller.sim_speed if controller is not None else None
+                        plan = planner.process(ego_objs, lane_result, ego_spd)
+                        annotated = planner.draw_overlay(annotated, plan)
+                    if controller is not None:
+                        cmd = controller.process(plan, lane_result)
+                        annotated = controller.draw(annotated, cmd)
+                    annotated = bev_projector.draw_panel(
+                        annotated, ego_objs, plan.predictions if plan is not None else None)
+                    if fusion is not None:
+                        annotated = fusion.draw_label(annotated)
+                if driver_monitor is not None and driver_cap is not None:
+                    ok_d, dframe = driver_cap.read()
+                    if ok_d:
+                        dres, _ = driver_monitor.process(dframe)
+                        annotated = driver_monitor.draw_chip(annotated, dres)
+            except Exception as exc:
+                logger.debug(f"advisory-sim overlay skipped: {exc}")
+
             # ── Terminal log on decision change ───────────────────────
             status = (decision.longitudinal, decision.lateral, decision.rule_id)
             if status != last_status:
@@ -217,6 +279,8 @@ def run(
             screenshot_idx += 1
 
     cap.release()
+    if driver_cap is not None:
+        driver_cap.release()
     if writer:
         writer.release()
     cv2.destroyAllWindows()
@@ -255,6 +319,8 @@ Examples
                    help="Save annotated output to this .mp4 file.")
     p.add_argument("--no-lanes",   action="store_true", help="Disable lane detection.")
     p.add_argument("--no-objects", action="store_true", help="Disable object detection.")
+    p.add_argument("--driver-cam", type=int, default=None, metavar="INDEX",
+                   help="Driver-facing camera index for attention monitoring (Module 9).")
 
     return p.parse_args()
 
@@ -268,4 +334,5 @@ if __name__ == "__main__":
         debug=args.debug,
         enable_lanes=not args.no_lanes,
         enable_objects=not args.no_objects,
+        driver_cam=args.driver_cam,
     )

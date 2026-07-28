@@ -369,3 +369,58 @@ COLOR_TRACK_ID = (255, 255, 255)   # track-ID tag colour (BGR)
 
 # --- Module toggle ----------------------------------------------------------
 ENABLE_TRACKING = True
+
+# ===========================================================================
+# PHASE 9 — Advisory simulation layers (Modules 5-9)
+# ===========================================================================
+# Software demonstrations of the perception -> fusion -> prediction -> planning
+# -> control chain, plus driver monitoring. ALL SIMULATION / ADVISORY ONLY —
+# none of this is ever connected to a real vehicle's sensors or actuators.
+# The "radar" is synthesised, the "control" drives a simulated ego only.
+# See ROADMAP.md and the README safety notice.
+
+# --- Layer 3: bird's-eye (ego-frame) projection, the shared 3D-ish space -----
+ENABLE_BEV        = True
+BEV_RANGE_M       = 60.0    # forward distance shown in the bird's-eye panel
+BEV_HALF_WIDTH_M  = 12.0    # lateral half-width shown (+/-)
+BEV_PANEL_W       = 200     # panel size in px
+BEV_PANEL_H       = 260
+COLOR_BEV_BG      = (25, 25, 25)
+COLOR_BEV_EGO     = (0, 220, 0)
+COLOR_BEV_CAM     = (255, 180, 0)   # camera depth estimate (BGR)
+COLOR_BEV_RADAR   = (0, 180, 255)   # simulated-radar estimate
+COLOR_BEV_FUSED   = (255, 255, 255) # fused estimate
+
+# --- Layer 1: simulated sensor fusion ----------------------------------------
+ENABLE_FUSION          = True
+RADAR_RANGE_NOISE_M    = 0.8   # sim-radar range noise (1 sigma)
+RADAR_VEL_NOISE_MPS    = 0.4   # sim-radar range-rate noise (1 sigma)
+FUSION_CAM_RANGE_VAR   = 9.0   # camera depth is noisy (variance, m^2)
+FUSION_RADAR_RANGE_VAR = 0.6   # radar range is precise (variance, m^2)
+
+# --- Layer 4: prediction & planning ------------------------------------------
+ENABLE_PLANNING     = True
+PRED_HORIZON_S      = 3.0     # how far ahead objects are predicted
+PRED_STEP_S         = 0.5     # prediction sampling step
+PLAN_CRUISE_MPS     = 13.9    # nominal cruise target (~50 km/h)
+PLAN_TIME_GAP_S     = 2.0     # desired following time gap
+PLAN_MIN_GAP_M      = 6.0     # minimum standoff distance
+COLOR_PLAN_PATH     = (0, 255, 180)   # advisory path ribbon
+COLOR_PRED_ARROW    = (180, 120, 255) # predicted object motion (BEV)
+
+# --- Layer 5: simulated control — NEVER wired to a vehicle -------------------
+ENABLE_CONTROL_SIM  = True
+CTRL_WHEELBASE_M    = 2.7
+CTRL_LOOKAHEAD_M    = 8.0     # pure-pursuit look-ahead
+CTRL_MAX_STEER_DEG  = 35.0
+CTRL_KP = 0.6                 # longitudinal PID
+CTRL_KI = 0.05
+CTRL_KD = 0.0
+CTRL_SIM_INIT_MPS   = 13.9    # simulated ego speed at start
+CTRL_MAX_ACCEL_MPS2 = 2.5
+CTRL_MAX_BRAKE_MPS2 = 6.0
+
+# --- Layer 7: driver monitoring — needs a driver-facing camera --------------
+ENABLE_DRIVER_MON      = True   # only runs when --driver-cam INDEX is provided
+DMS_EYES_CLOSED_FRAMES = 12     # consecutive no-eye frames -> DROWSY
+DMS_LOOKAWAY_RATIO     = 0.22   # face-centre offset (frac of width) -> DISTRACTED
