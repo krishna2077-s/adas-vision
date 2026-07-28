@@ -15,6 +15,7 @@ survey-grade measurements — good enough for "is this getting closer" logic.
 """
 
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
@@ -98,9 +99,22 @@ class ObjectDetector:
                 "Install it:  pip install ultralytics"
             ) from exc
 
-        logger.info(f"Loading YOLO model '{cfg.YOLO_MODEL}' (downloads on first run) ...")
-        self.model = YOLO(cfg.YOLO_MODEL)
-        logger.info("YOLO model loaded.")
+        # Pick the fast ONNX build if configured and present; else the .pt.
+        # Ultralytics runs an .onnx through ONNX Runtime with the identical
+        # results API, so the rest of this class is unchanged.
+        model_file = cfg.YOLO_MODEL
+        if getattr(cfg, "YOLO_BACKEND", "torch").lower() == "onnx":
+            onnx_path = getattr(cfg, "YOLO_ONNX_MODEL", "")
+            if onnx_path and os.path.exists(onnx_path):
+                model_file = onnx_path
+            else:
+                logger.info(f"YOLO ONNX '{onnx_path}' not found — using PyTorch model "
+                            f"'{cfg.YOLO_MODEL}' (run export_yolo_onnx.py to enable the fast path).")
+
+        self.backend = "onnx" if model_file.endswith(".onnx") else "torch"
+        logger.info(f"Loading YOLO model '{model_file}' ({self.backend}; downloads on first run) ...")
+        self.model = YOLO(model_file)
+        logger.info(f"YOLO model loaded ({self.backend}).")
 
         # Pre-compute the focal length used by the distance estimator.
         # focal_px = (known_pixel_height * known_distance) / real_height
@@ -134,6 +148,7 @@ class ObjectDetector:
         # ── YOLO inference ────────────────────────────────────────────
         yolo_out = self.model(
             frame,
+            imgsz=cfg.YOLO_IMGSZ,           # lower = faster on CPU (torch backend only)
             conf=cfg.YOLO_CONF_THRESHOLD,
             iou=cfg.YOLO_IOU_THRESHOLD,
             verbose=False,

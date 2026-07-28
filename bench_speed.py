@@ -56,6 +56,28 @@ def bench(backend, frames, w, h):
     return len(frames) / dt, backend
 
 
+def bench_yolo(frames):
+    """Time YOLO (Module 2) with the PyTorch .pt vs the exported .onnx."""
+    import os
+    try:
+        from ultralytics import YOLO
+    except ImportError:
+        print("  ultralytics not installed — skipping YOLO")
+        return
+    for name, path in (("torch", cfg.YOLO_MODEL),
+                       ("onnx", getattr(cfg, "YOLO_ONNX_MODEL", "yolov8n.onnx"))):
+        if not os.path.exists(path):
+            print(f"  {name:6s}: {path} not found (run export_yolo_onnx.py)")
+            continue
+        m = YOLO(path)
+        m(frames[0], conf=cfg.YOLO_CONF_THRESHOLD, iou=cfg.YOLO_IOU_THRESHOLD, verbose=False)
+        t0 = time.time()
+        for f in frames:
+            m(f, conf=cfg.YOLO_CONF_THRESHOLD, iou=cfg.YOLO_IOU_THRESHOLD, verbose=False)
+        dt = time.time() - t0
+        print(f"  {name:6s}: {len(frames)/dt:5.1f} fps")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--video", default="dashcam.mp4")
@@ -67,9 +89,10 @@ def main():
         raise SystemExit("[bench] no frames read")
     h, w = frames[0].shape[:2]
     every = cfg.LEARNED_INFER_EVERY
-    print(f"[bench] {len(frames)} frames | source {w}x{h} | model input "
-          f"{cfg.LEARNED_INPUT_W}x{cfg.LEARNED_INPUT_H} | frame-skip every {every}")
+    print(f"[bench] {len(frames)} frames | source {w}x{h}")
 
+    print(f"[bench] road segmentation (Module 1c) @ {cfg.LEARNED_INPUT_W}x{cfg.LEARNED_INPUT_H}, "
+          f"frame-skip every {every}:")
     for backend in ("torch", "onnx"):
         fps, used = bench(backend, frames, w, h)
         if fps is None:
@@ -77,8 +100,11 @@ def main():
             continue
         print(f"  {backend:6s}: {fps:5.1f} fps raw   ->  {fps*every:5.1f} fps effective")
 
-    print("[bench] 'effective' is what the live pipeline delivers for road guidance.")
-    print("[bench] 15+ effective fps = real-time-smooth for video.")
+    print("[bench] YOLO object detection (Module 2), every frame:")
+    bench_yolo(frames)
+
+    print("[bench] 'effective' is what the live pipeline delivers.")
+    print("[bench] 15+ fps = real-time-smooth for video.")
 
 
 if __name__ == "__main__":

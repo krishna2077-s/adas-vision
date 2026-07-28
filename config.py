@@ -197,6 +197,21 @@ YOLO_MODEL = "yolov8n.pt"
 YOLO_CONF_THRESHOLD = 0.35   # Minimum detection confidence
 YOLO_IOU_THRESHOLD  = 0.45   # Non-max-suppression IoU threshold
 
+# ── Speed (Phase 8) ──────────────────────────────────────────────────────────
+# Measured on an i7-8650U CPU: unlike the road model, ONNX gives YOLOv8n NO real
+# speedup — it's tiny and overhead-bound (preprocess + NMS dominate the forward
+# pass). The lever that DOES help on CPU is input resolution, YOLO_IMGSZ:
+#     640 = default/most range,  512 ~= 1.3x,  416 ~= 1.4x (misses more small /
+#     distant objects — a safety trade-off, so it's left at 640 by default).
+# Only the "torch" backend can change imgsz at run time; an ONNX graph is fixed
+# at its export resolution.
+YOLO_IMGSZ      = 640             # inference resolution (lower = faster, less range)
+YOLO_BACKEND    = "torch"         # "torch" (default; flexible imgsz) | "onnx" (fixed res, ~equal on CPU)
+YOLO_ONNX_MODEL = "yolov8n.onnx"  # optional; produced by export_yolo_onnx.py
+# Object detection runs EVERY frame — a hazard can appear between any two frames,
+# so we never frame-skip it (that's why only the road model, which barely moves
+# frame-to-frame, uses LEARNED_INFER_EVERY).
+
 # COCO class names we care about on a road. Everything else is ignored.
 RELEVANT_CLASSES = {
     "person",

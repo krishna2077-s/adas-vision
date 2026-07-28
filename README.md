@@ -4,10 +4,33 @@ An open, low-cost Advanced Driver Assistance System built to run on hardware peo
 
 **This release: painted-lane detection, learned drivable-area segmentation for unmarked roads (a compact CNN trained on the full Indian Driving Dataset), object detection with collision warnings, multi-object tracking with stable IDs, and a decision engine that fuses it all into a single arbitrated driving action every frame.**
 
-> **Safety notice:** this is an *advisory / research* system. It must never be
-> connected to a vehicle's steering, throttle, or brakes. A CPU vision system
-> will sometimes be confidently wrong; treat its output as an overlay and
-> warning layer only.
+> ## ⚠️ Safety notice — read this first
+>
+> **This is an advisory / research and learning project. It must NEVER be
+> connected to a vehicle's steering, throttle, or brakes, and must NEVER be
+> relied on while actually driving.** No configuration, tuning, or amount of
+> extra training changes this. It is not a life-safety system, and here is
+> honestly why it cannot be one:
+>
+> - **One camera, no redundancy.** Real ADAS fuse camera **+ radar** (often
+>   + lidar). A single camera *cannot* reliably measure distance — this system
+>   estimates it from bounding-box size, which is approximate by design. Glare,
+>   rain, night, or a dirty lens can blind it with nothing to cross-check.
+> - **No guaranteed timing.** Life-safety systems run at 30–60+ fps with hard
+>   real-time deadlines on automotive-grade, redundant hardware. A shared laptop
+>   CPU running best-effort has no such guarantee — the one moment it stalls
+>   could be the moment that matters.
+> - **Not certified or validated.** Production ADAS are built to functional-
+>   safety standards (ISO 26262 / ASIL) and validated over millions of miles.
+>   This is not.
+> - **A CPU vision model is sometimes confidently wrong** — and in a real car,
+>   being confidently wrong about a pedestrian is exactly the failure that costs
+>   a life.
+>
+> **The safe design is precisely that it stays out of the control loop.** Use it
+> as a screen overlay, a dashcam-analysis / driver-awareness tool you *review*,
+> and a way to learn computer vision — never as something that drives or that you
+> trust to keep you safe on the road.
 
 ## What it does
 
@@ -146,6 +169,11 @@ python bench_speed.py
 ```
 
 If the `.onnx` file or `onnxruntime` is absent, the system falls back to the PyTorch backend automatically — nothing breaks.
+
+**Object detection (Module 2) is deliberately *not* sped up the same way.** Two honest reasons:
+
+- **ONNX doesn't help YOLOv8n on CPU.** It's a tiny, overhead-bound model (preprocessing + NMS dominate), so ONNX Runtime measured no faster than PyTorch on this hardware (unlike the road model's 2.8×). The ONNX path (`export_yolo_onnx.py`, `YOLO_BACKEND`) exists for edge/INT8 experiments but defaults to `torch`. The one CPU lever that *does* help is input resolution (`YOLO_IMGSZ`: 512 ≈ 1.3×), left at 640 by default.
+- **No frame-skip on hazards — on purpose.** The road barely moves between frames, so skipping its inference is safe. A pedestrian or vehicle can appear between *any* two frames, so object detection runs **every frame** — we never trade hazard-detection latency for speed. See the safety notice above.
 
 ## Usage
 
