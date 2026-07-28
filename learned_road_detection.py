@@ -24,6 +24,7 @@ YOLOv8n. Advisory / research only: never wire this to a vehicle's controls.
 """
 
 import logging
+import os
 from typing import List, Optional, Tuple
 
 import cv2
@@ -71,7 +72,14 @@ class LearnedRoadDetector:
         self.model_path = model_path or cfg.LEARNED_MODEL_PATH
         self._smooth_look_x: Optional[float] = None
         self.model: Optional[nn.Module] = None
+        self.session = None                       # ONNX Runtime session (if backend=onnx)
+        self._onnx_input = None
+        self.backend = "torch"
         self.available = False
+
+        # Frame-skip state: run the CNN every Nth frame, reuse the mask between.
+        self._last_mask: Optional[np.ndarray] = None
+        self._skip_ctr = 0
 
         if cfg.LEARNED_NUM_THREADS > 0:
             torch.set_num_threads(cfg.LEARNED_NUM_THREADS)
@@ -97,6 +105,39 @@ class LearnedRoadDetector:
         raise ValueError(f"unknown LEARNED_ARCH '{cfg.LEARNED_ARCH}' (use 'lraspp' or 'deeplabv3')")
 
     def _load_model(self) -> None:
+        """Loads the requested backend (onnx → torch → unavailable), in order."""
+        if getattr(cfg, "LEARNED_BACKEND", "torch").lower() == "onnx" and self._load_onnx():
+            return
+        self._load_torch()
+
+    def _load_onnx(self) -> bool:
+        """Tries to bring up the ONNX Runtime backend. Returns True on success."""
+        onnx_path = getattr(cfg, "LEARNED_ONNX_PATH", "")
+        if not onnx_path or not os.path.exists(onnx_path):
+            logger.info(f"ONNX model '{onnx_path}' not found — trying PyTorch backend.")
+            return False
+        try:
+            import onnxruntime as ort
+            so = ort.SessionOptions()
+            so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+            if cfg.LEARNED_NUM_THREADS > 0:
+                so.intra_op_num_threads = cfg.LEARNED_NUM_THREADS
+            self.session = ort.InferenceSession(onnx_path, sess_options=so,
+                                                providers=["CPUExecutionProvider"])
+            self._onnx_input = self.session.get_inputs()[0].name
+            self.backend = "onnx"
+            self.available = True
+            logger.info(
+                f"LearnedRoadDetector ready (ONNX) — '{onnx_path}', "
+                f"{cfg.LEARNED_INPUT_W}x{cfg.LEARNED_INPUT_H} input, "
+                f"infer every {cfg.LEARNED_INFER_EVERY} frame(s)"
+            )
+            return True
+        except Exception as exc:
+            logger.warning(f"ONNX backend failed to load ({exc}) — trying PyTorch backend.")
+            return False
+
+    def _load_torch(self) -> None:
         try:
             model = self._build_arch()
             state = torch.load(self.model_path, map_location="cpu")
@@ -106,11 +147,12 @@ class LearnedRoadDetector:
                 model.aux_classifier = None
             model.eval()
             self.model = model
+            self.backend = "torch"
             self.available = True
             logger.info(
-                f"LearnedRoadDetector ready ({self.w}x{self.h}) — arch '{cfg.LEARNED_ARCH}', "
+                f"LearnedRoadDetector ready (PyTorch) ({self.w}x{self.h}) — arch '{cfg.LEARNED_ARCH}', "
                 f"weights '{self.model_path}', {cfg.LEARNED_INPUT_W}x{cfg.LEARNED_INPUT_H} input, "
-                f"{torch.get_num_threads()} threads"
+                f"{torch.get_num_threads()} threads, infer every {cfg.LEARNED_INFER_EVERY} frame(s)"
             )
         except FileNotFoundError:
             logger.warning(
@@ -122,6 +164,8 @@ class LearnedRoadDetector:
 
     def reset(self) -> None:
         self._smooth_look_x = None
+        self._last_mask = None
+        self._skip_ctr = 0
 
     # ------------------------------------------------------------------
     # Public API
@@ -153,7 +197,16 @@ class LearnedRoadDetector:
             result.steering = "UNKNOWN -- learned model unavailable"
             return result, canvas
 
-        mask = self._infer_mask(frame)
+        # Frame-skip: only run the CNN every Nth frame; reuse the mask between.
+        # The centreline/steering below still recompute every frame, so guidance
+        # stays smooth while the expensive inference runs ~1/N as often.
+        every = max(1, getattr(cfg, "LEARNED_INFER_EVERY", 1))
+        if self._last_mask is None or self._skip_ctr <= 0:
+            self._last_mask = self._infer_mask(frame)
+            self._skip_ctr = every - 1
+        else:
+            self._skip_ctr -= 1
+        mask = self._last_mask
         centre, coverage = self._centreline(mask)
 
         if coverage >= cfg.LEARNED_MIN_COVERAGE and len(centre) >= cfg.LEARNED_MIN_ROWS:
@@ -187,14 +240,20 @@ class LearnedRoadDetector:
     # ------------------------------------------------------------------
 
     def _infer_mask(self, frame: np.ndarray) -> np.ndarray:
-        """Runs the CNN and returns a full-res binary drivable mask (0/255)."""
+        """Runs the CNN (torch or onnx) and returns a full-res binary mask (0/255)."""
         img = cv2.resize(frame, (cfg.LEARNED_INPUT_W, cfg.LEARNED_INPUT_H))
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         x = (img.astype(np.float32) / 255.0 - _MEAN) / _STD
-        x = torch.from_numpy(np.ascontiguousarray(x.transpose(2, 0, 1))).unsqueeze(0)
-        with torch.no_grad():
-            out = self.model(x)["out"]                 # (1, 2, H, W)
-        pred = out.argmax(1).squeeze(0).numpy().astype(np.uint8)
+        x = np.ascontiguousarray(x.transpose(2, 0, 1))[None]      # (1, 3, H, W)
+
+        if self.backend == "onnx":
+            out = self.session.run(None, {self._onnx_input: x})[0]   # (1, 2, H, W)
+            pred = out.argmax(1).squeeze(0).astype(np.uint8)
+        else:
+            with torch.no_grad():
+                out = self.model(torch.from_numpy(x))["out"]
+            pred = out.argmax(1).squeeze(0).numpy().astype(np.uint8)
+
         mask = cv2.resize(pred, (self.w, self.h), interpolation=cv2.INTER_NEAREST) * 255
         return mask
 

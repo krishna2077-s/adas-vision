@@ -136,6 +136,21 @@ LEARNED_CONF_CAP     = 0.80    # cap on reported confidence (est. drivable-area,
 LEARNED_FILL_COLOR   = (200, 130, 0)  # BGR teal — distinct from classical green road fill
 LEARNED_FILL_ALPHA   = 0.40
 
+# ── Real-time speed (Phase 8) ────────────────────────────────────────────────
+# Three stackable levers, none needs retraining:
+#   BACKEND      "onnx" runs the SAME weights through ONNX Runtime — usually
+#                1.5-3x faster than PyTorch on CPU, identical output. Falls back
+#                to "torch" automatically if the .onnx (or onnxruntime) is absent.
+#   INFER_EVERY  run the CNN once every N frames and reuse the mask in between.
+#                The road barely moves frame-to-frame, so N=3 ~triples throughput
+#                with negligible quality loss; the centreline still updates every
+#                frame from the cached mask.
+#   INPUT_W/H    (above) drop to 512x288 for ~2x, 384x216 for ~4x (less precise).
+# Stacked, these turn ~3 fps into real-time on a plain laptop CPU.
+LEARNED_BACKEND      = "onnx"   # "onnx" (fast) | "torch"
+LEARNED_ONNX_PATH    = "drivable_idd_lraspp_768x432.onnx"  # made by export_onnx.py
+LEARNED_INFER_EVERY  = 3        # run the CNN every Nth frame (1 = every frame)
+
 # ---------------------------------------------------------------------------
 # Lane smoothing
 # Exponential moving average keeps the displayed lanes stable across frames.

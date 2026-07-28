@@ -129,6 +129,24 @@ This pulls in OpenCV, NumPy, Ultralytics (which brings a CPU build of PyTorch fo
 
 **Learned road model (Module 1c):** place the trained weights `drivable_idd_full_best.pth` in the repo root. They are produced by [`colab/phase6c_full_idd.ipynb`](colab/phase6c_full_idd.ipynb) (free Colab GPU) and shared via a GitHub Release rather than committed (the file is large). Without it, the system automatically falls back to the classical road detector (Module 1b) — nothing breaks, unmarked-road guidance is just less accurate.
 
+## Real-time performance
+
+The learned road model (Module 1c) has two stackable, retraining-free speed levers, both on by default in [config.py](config.py):
+
+- **ONNX Runtime backend** (`LEARNED_BACKEND = "onnx"`) — runs the *same* trained weights ~2.8× faster than PyTorch on CPU, with byte-identical segmentation. Export once after training:
+  ```bash
+  python export_onnx.py
+  ```
+- **Frame-skip** (`LEARNED_INFER_EVERY = 3`) — runs the CNN every Nth frame and reuses the mask between (the road barely moves frame-to-frame); the centreline still updates every frame. ~3× effective throughput.
+
+Together they take the model from ~2 fps to **~17 effective fps** on a laptop CPU — real-time-smooth. Drop `LEARNED_INPUT_W/H` to 512×288 for roughly 2× more. Benchmark on your own machine:
+
+```bash
+python bench_speed.py
+```
+
+If the `.onnx` file or `onnxruntime` is absent, the system falls back to the PyTorch backend automatically — nothing breaks.
+
 ## Usage
 
 ```bash
@@ -196,7 +214,7 @@ For the decision engine (Module 3), the settings that matter most:
 - [x] **Phase 5** — Unmarked-road guidance: hybrid paint + drivable-surface following (validated on hill, city and highway footage)
 - [x] **Phase 6** — Learned drivable-area segmentation (LRASPP MobileNetV3 trained on the full IDD, val IoU 0.92) — trained free on Colab, **runs on CPU** at run time, integrated as Module 1c
 - [ ] **Phase 7** (in progress) — Stronger model: DeepLabV3-MobileNetV3 (ASPP multi-scale head) + night/fog/blur/shadow augmentation + Dice loss, targeting the haze / night / hill weak spots. `colab/phase7_deeplab_aug.ipynb`; loadable via `LEARNED_ARCH = "deeplabv3"`
-- [ ] **Phase 8** — More data (BDD100K night + weather) + edge deployment (ONNX → TensorRT on Jetson / OpenVINO on the laptop iGPU)
+- [~] **Phase 8** — Real-time inference: **ONNX Runtime CPU backend (~2.8× over PyTorch, identical output) + frame-skip (~3×)** → real-time drivable-area on a plain laptop CPU (done); next: OpenVINO on the Intel iGPU + INT8, more data (BDD100K night + weather)
 
 ## Design principles
 
