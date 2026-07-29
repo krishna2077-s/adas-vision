@@ -424,3 +424,26 @@ CTRL_MAX_BRAKE_MPS2 = 6.0
 ENABLE_DRIVER_MON      = True   # only runs when --driver-cam INDEX is provided
 DMS_EYES_CLOSED_FRAMES = 12     # consecutive no-eye frames -> DROWSY
 DMS_LOOKAWAY_RATIO     = 0.22   # face-centre offset (frac of width) -> DISTRACTED
+
+# ===========================================================================
+# MODULE 10 — Forward Collision Warning (driver-facing staged alert)
+# ===========================================================================
+# A visible, escalating collision alert layered on top of the decision engine.
+# It consumes the SAME nearest in-path hazard the brain already selected (so the
+# banner and the brain can never disagree about which object matters), and
+# renders a staged banner + a live time-to-collision countdown, a warning
+# bracket on the threat, and an optional audible chime. Escalates instantly,
+# releases slowly (anti-flicker). Advisory only — it warns a human, brakes
+# nothing.
+ENABLE_FCW           = True
+FCW_TTC_CAUTION_S    = 3.5    # closing in-path TTC below this -> CAUTION (amber "risk")
+FCW_TTC_WARN_S       = 2.2    # below this -> WARNING (orange)
+FCW_TTC_IMMINENT_S   = 1.2    # below this -> IMMINENT (red brake-now flash + chime)
+FCW_DIST_IMMINENT_M  = 6.0    # in-path lead this close -> IMMINENT regardless of TTC
+FCW_MIN_CLOSING_MPS  = 0.3    # must be closing to warn (a receding lead is no threat)
+FCW_HOLD_FRAMES      = 6      # frames a stage is held before it may step down (anti-flicker)
+FCW_AUDIO            = False  # opt-in audible chime (winsound on Windows); non-blocking
+FCW_AUDIO_COOLDOWN_S = 1.5    # minimum seconds between chimes
+COLOR_FCW_CAUTION    = (0, 200, 255)   # amber  (BGR)
+COLOR_FCW_WARNING    = (0, 90, 255)    # orange
+COLOR_FCW_IMMINENT   = (0, 0, 255)     # red

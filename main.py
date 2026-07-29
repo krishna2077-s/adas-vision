@@ -36,6 +36,7 @@ import cv2
 
 import config as cfg
 from decision_engine import DecisionEngine
+from forward_collision_warning import ForwardCollisionWarning
 from lane_detection import LaneDetector
 from road_detection import RoadDetector
 from tracker import MultiObjectTracker
@@ -117,6 +118,11 @@ def run(
     # ── Module 3: decision engine (fuses whatever modules are enabled) ─────
     engine = DecisionEngine(frame_width=w, frame_height=h)
 
+    # ── Module 10: Forward Collision Warning (driver-facing staged alert) ──
+    # Consumes the engine's already-selected hazard; warns a human, brakes nothing.
+    fcw = ForwardCollisionWarning(w, h) if cfg.ENABLE_FCW else None
+    last_fcw_level = 0
+
     # ── Modules 5-9: advisory SIMULATION layers (Phase 9) ─────────────────
     # perception BEV -> sim fusion -> prediction/planning -> sim control, plus
     # driver monitoring. ALL advisory/simulated — never wired to a vehicle.
@@ -175,10 +181,11 @@ def run(
                         road_detector.reset()
                     if learned_road_detector is not None:
                         learned_road_detector.reset()
-                    for m in (bev_projector, fusion, planner, controller, driver_monitor):
+                    for m in (bev_projector, fusion, planner, controller, driver_monitor, fcw):
                         if m is not None:
                             m.reset()
                     last_status = None
+                    last_fcw_level = 0
                     continue
                 logger.error("Camera read failed.")
                 break
@@ -249,6 +256,20 @@ def run(
                         annotated = driver_monitor.draw_chip(annotated, dres)
             except Exception as exc:
                 logger.debug(f"advisory-sim overlay skipped: {exc}")
+
+            # ── Module 10: Forward Collision Warning (drawn LAST — a ──
+            # collision alert must never be occluded by another overlay).
+            if fcw is not None:
+                try:
+                    fcw_state = fcw.process(decision, tracks)
+                    annotated = fcw.draw(annotated, fcw_state, tracks)
+                    if fcw_state.level >= 2 and fcw_state.level != last_fcw_level:
+                        logger.warning(
+                            f"FCW {fcw_state.name}: {fcw_state.label} #{fcw_state.hazard_id} "
+                            f"TTC {fcw_state.ttc_s}s dist {fcw_state.distance_m}m")
+                    last_fcw_level = fcw_state.level
+                except Exception as exc:
+                    logger.debug(f"FCW overlay skipped: {exc}")
 
             # ── Terminal log on decision change ───────────────────────
             status = (decision.longitudinal, decision.lateral, decision.rule_id)
