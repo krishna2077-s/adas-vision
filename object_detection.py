@@ -99,11 +99,27 @@ class ObjectDetector:
                 "Install it:  pip install ultralytics"
             ) from exc
 
-        # Pick the fast ONNX build if configured and present; else the .pt.
-        # Ultralytics runs an .onnx through ONNX Runtime with the identical
-        # results API, so the rest of this class is unchanged.
+        # Backend selection — all graceful (fall back to the .pt if a fast build
+        # or its runtime is missing). Ultralytics exposes the identical results
+        # API for every backend, so the rest of this class is unchanged.
+        #   openvino -> yolov8n_openvino_model/ on the Intel iGPU (FASTEST here,
+        #               ~2.9x over torch-CPU: the road model AND YOLO both run on
+        #               the otherwise-idle iGPU)
+        #   onnx     -> yolov8n.onnx via ONNX Runtime (no CPU win for YOLO — see
+        #               config note; kept for edge/INT8 experiments)
+        #   torch    -> yolov8n.pt (portable default; only backend with live imgsz)
+        backend_cfg = getattr(cfg, "YOLO_BACKEND", "torch").lower()
         model_file = cfg.YOLO_MODEL
-        if getattr(cfg, "YOLO_BACKEND", "torch").lower() == "onnx":
+        self._device = None
+        if backend_cfg == "openvino":
+            ov_dir = getattr(cfg, "YOLO_OPENVINO_MODEL", "yolov8n_openvino_model")
+            if os.path.isdir(ov_dir):
+                model_file = ov_dir
+                self._device = getattr(cfg, "YOLO_OV_DEVICE", "intel:gpu")
+            else:
+                logger.info(f"YOLO OpenVINO dir '{ov_dir}' not found — using PyTorch model "
+                            f"'{cfg.YOLO_MODEL}' (run export_yolo_openvino.py for the iGPU path).")
+        elif backend_cfg == "onnx":
             onnx_path = getattr(cfg, "YOLO_ONNX_MODEL", "")
             if onnx_path and os.path.exists(onnx_path):
                 model_file = onnx_path
@@ -111,9 +127,23 @@ class ObjectDetector:
                 logger.info(f"YOLO ONNX '{onnx_path}' not found — using PyTorch model "
                             f"'{cfg.YOLO_MODEL}' (run export_yolo_onnx.py to enable the fast path).")
 
-        self.backend = "onnx" if model_file.endswith(".onnx") else "torch"
-        logger.info(f"Loading YOLO model '{model_file}' ({self.backend}; downloads on first run) ...")
-        self.model = YOLO(model_file)
+        if os.path.isdir(model_file):
+            self.backend = "openvino"
+        elif model_file.endswith(".onnx"):
+            self.backend = "onnx"
+        else:
+            self.backend = "torch"
+        logger.info(f"Loading YOLO model '{model_file}' ({self.backend}"
+                    + (f" on {self._device}" if self._device else "") + ") ...")
+        try:
+            self.model = YOLO(model_file)
+        except Exception as exc:
+            # e.g. openvino not installed, or a bad export — degrade to PyTorch.
+            logger.warning(f"YOLO '{self.backend}' backend failed to load ({exc}) — "
+                           f"falling back to PyTorch '{cfg.YOLO_MODEL}'.")
+            self.model = YOLO(cfg.YOLO_MODEL)
+            self.backend = "torch"
+            self._device = None
         logger.info(f"YOLO model loaded ({self.backend}).")
 
         # Pre-compute the focal length used by the distance estimator.
@@ -146,13 +176,15 @@ class ObjectDetector:
             lane_center_x = self.w // 2
 
         # ── YOLO inference ────────────────────────────────────────────
-        yolo_out = self.model(
-            frame,
+        infer_kw = dict(
             imgsz=cfg.YOLO_IMGSZ,           # lower = faster on CPU (torch backend only)
             conf=cfg.YOLO_CONF_THRESHOLD,
             iou=cfg.YOLO_IOU_THRESHOLD,
             verbose=False,
-        )[0]
+        )
+        if self._device:                    # OpenVINO: run on the Intel iGPU
+            infer_kw["device"] = self._device
+        yolo_out = self.model(frame, **infer_kw)[0]
 
         detections: List[Detection] = []
         for box in yolo_out.boxes:

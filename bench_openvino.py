@@ -45,9 +45,70 @@ def timeit(fn, x, iters, warmup=5):
     return dt * 1000.0            # ms/frame
 
 
+def bench_yolo(iters: int) -> None:
+    """Time YOLOv8n's FULL detect (preprocess + infer + NMS): torch vs OV CPU/GPU."""
+    import logging as _l
+    _l.getLogger("ultralytics").setLevel(_l.ERROR)
+    try:
+        from ultralytics import YOLO
+    except ImportError:
+        print("ultralytics not installed — skipping YOLO bench.")
+        return
+
+    cap = cv2.VideoCapture("dashcam.mp4")
+    frs = []
+    cap.set(cv2.CAP_PROP_POS_FRAMES, 8000)
+    for _ in range(20):
+        ok, f = cap.read()
+        if ok:
+            frs.append(f)
+    cap.release()
+    if not frs:
+        print("dashcam.mp4 not readable — skipping YOLO bench.")
+        return
+
+    def run(model, device, n=25, warm=5):
+        kw = dict(imgsz=cfg.YOLO_IMGSZ, conf=cfg.YOLO_CONF_THRESHOLD,
+                  iou=cfg.YOLO_IOU_THRESHOLD, verbose=False)
+        if device:
+            kw["device"] = device
+        for i in range(warm):
+            model(frs[i % len(frs)], **kw)
+        t0 = time.perf_counter()
+        for i in range(n):
+            model(frs[i % len(frs)], **kw)
+        return (time.perf_counter() - t0) / n * 1000
+
+    ov_dir = getattr(cfg, "YOLO_OPENVINO_MODEL", "yolov8n_openvino_model")
+    rows = []
+    try:
+        rows.append(("torch", "CPU", run(YOLO(cfg.YOLO_MODEL), None)))
+    except Exception as exc:
+        print("YOLO torch skipped:", exc)
+    if os.path.isdir(ov_dir):
+        for dev in ("intel:cpu", "intel:gpu"):
+            try:
+                rows.append(("openvino", dev.split(":")[1].upper(), run(YOLO(ov_dir), dev)))
+            except Exception as exc:
+                print(f"YOLO openvino {dev} skipped:", exc)
+    else:
+        print(f"(no {ov_dir}/ — run export_yolo_openvino.py for the OpenVINO rows)")
+
+    print(f"\nYOLOv8n full detect (imgsz={cfg.YOLO_IMGSZ}, iters={iters})\n")
+    print(f"{'backend':10s} {'device':6s} {'ms/frame':>9s} {'fps':>7s}")
+    print("-" * 36)
+    for tag, dev, ms in rows:
+        print(f"{tag:10s} {dev:6s} {ms:9.1f} {1000/ms:7.1f}")
+    if rows:
+        best = min(rows, key=lambda r: r[2])
+        print(f"\nfastest: {best[0]} on {best[1]} ({1000/best[2]:.1f} fps) "
+              f"-- {rows[0][2]/best[2]:.2f}x vs torch-CPU")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--iters", type=int, default=40)
+    ap.add_argument("--yolo", action="store_true", help="also benchmark YOLOv8n across backends.")
     args = ap.parse_args()
 
     x = sample_input()
@@ -122,6 +183,9 @@ def main():
         best = min(rows, key=lambda r: r[2])
         print(f"\nfastest: {best[0]} on {best[1]}  ({1000.0/best[2]:.1f} raw fps, "
               f"{1000.0/best[2]*every:.1f} effective) — {base/best[2]:.2f}x vs first row")
+
+    if args.yolo:
+        bench_yolo(args.iters)
 
 
 if __name__ == "__main__":

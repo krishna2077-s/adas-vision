@@ -11,6 +11,9 @@ logs/
 # Downloaded model weights (auto-downloads on first run)
 *.pt
 
+# YOLO OpenVINO IR directory (Phase 11) — produced by export_yolo_openvino.py
+yolov8n_openvino_model/
+
 # Trained segmentation weights (Module 1c) — large; produced by the Colab
 # notebook, shared via a GitHub Release rather than committed to the repo.
 *.pth

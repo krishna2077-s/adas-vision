@@ -81,7 +81,26 @@ def latency_budget(frames: int) -> None:
     def timed(name, fn):
         t0 = _t(); out = fn(); acc[name] = acc.get(name, 0.0) + (_t() - t0) * 1000; return out
 
-    n = 0
+    # Time the road model at its REAL cadence (frame-skip), not every frame —
+    # otherwise it and YOLO would contend for the one iGPU every frame and the
+    # budget would over-state both. This mirrors what the live pipeline does.
+    every = max(1, cfg.LEARNED_INFER_EVERY)
+
+    # Warm-up: the FIRST OpenVINO iGPU inference JIT-compiles kernels (can take
+    # 10-20 s). Run a few untimed frames first so that one-time cost doesn't
+    # pollute the steady-state budget.
+    cap.set(cv2.CAP_PROP_POS_FRAMES, 8000)
+    for _ in range(6):
+        ok, warm = cap.read()
+        if not ok:
+            break
+        wl = lane.process(warm.copy())[0]
+        if road is not None:
+            road._infer_mask(warm)
+        if obj is not None:
+            obj.process(warm.copy(), wl.lane_center_x)
+
+    n = road_calls = 0
     cap.set(cv2.CAP_PROP_POS_FRAMES, 8000)
     while n < frames:
         ok, frame = cap.read()
@@ -89,8 +108,9 @@ def latency_budget(frames: int) -> None:
             break
         ann = frame.copy()
         lr = timed("lane", lambda: lane.process(ann))[0]
-        if road is not None:
-            timed("road_infer(full)", lambda: road._infer_mask(frame))
+        if road is not None and n % every == 0:
+            timed("road_infer", lambda: road._infer_mask(frame))
+            road_calls += 1
         orr = None
         if obj is not None:
             orr = timed("object(YOLO)", lambda: obj.process(frame.copy(), lr.lane_center_x))[0]
@@ -110,26 +130,22 @@ def latency_budget(frames: int) -> None:
         print("[latency] no frames read.")
         return
 
-    every = max(1, cfg.LEARNED_INFER_EVERY)
-    # amortise the frame-skipped road inference
-    if "road_infer(full)" in acc:
-        acc["road_infer(skip%d)" % every] = acc["road_infer(full)"] / every
-
-    print(f"\n== latency budget ({n} frames, {w}x{h}, backend={cfg.LEARNED_BACKEND}"
-          f"/{cfg.LEARNED_OV_DEVICE}) ==")
-    print(f"{'module':22s} {'ms/frame':>9s} {'share':>7s}")
-    print("-" * 42)
-    # the pipeline total uses the amortised road cost, not the full one
-    live = {k: v for k, v in acc.items() if k != "road_infer(full)"}
-    total = sum(v for k, v in live.items()) / n
-    for name, ms in sorted(live.items(), key=lambda kv: -kv[1]):
+    yb = getattr(cfg, "YOLO_BACKEND", "torch")
+    print(f"\n== latency budget ({n} frames, {w}x{h}, road={cfg.LEARNED_BACKEND}"
+          f"/{cfg.LEARNED_OV_DEVICE}, yolo={yb}) ==")
+    print(f"{'module':16s} {'ms/frame':>9s} {'share':>7s}")
+    print("-" * 36)
+    # every module's per-frame AMORTISED cost (road already only ran 1/every)
+    total = sum(acc.values()) / n
+    for name, ms in sorted(acc.items(), key=lambda kv: -kv[1]):
         per = ms / n
-        print(f"{name:22s} {per:9.1f} {per/total*100:6.1f}%")
-    print("-" * 42)
-    print(f"{'PIPELINE TOTAL':22s} {total:9.1f} {'':>7s}")
-    print(f"{'-> end-to-end':22s} {1000.0/total:8.1f} fps")
-    if "road_infer(full)" in acc:
-        print(f"(note: road_infer full = {acc['road_infer(full)']/n:.1f} ms, run 1/{every} frames)")
+        print(f"{name:16s} {per:9.1f} {per/total*100:6.1f}%")
+    print("-" * 36)
+    print(f"{'PIPELINE TOTAL':16s} {total:9.1f}")
+    print(f"{'-> end-to-end':16s} {1000.0/total:8.1f} fps")
+    if road_calls:
+        print(f"(road_infer full = {acc.get('road_infer',0)/road_calls:.1f} ms, "
+              f"run 1/{every} frames -> {acc.get('road_infer',0)/n:.1f} ms amortised)")
 
 
 # ---------------------------------------------------------------------------

@@ -217,17 +217,23 @@ YOLO_MODEL = "yolov8n.pt"
 YOLO_CONF_THRESHOLD = 0.35   # Minimum detection confidence
 YOLO_IOU_THRESHOLD  = 0.45   # Non-max-suppression IoU threshold
 
-# ── Speed (Phase 8) ──────────────────────────────────────────────────────────
-# Measured on an i7-8650U CPU: unlike the road model, ONNX gives YOLOv8n NO real
-# speedup — it's tiny and overhead-bound (preprocess + NMS dominate the forward
-# pass). The lever that DOES help on CPU is input resolution, YOLO_IMGSZ:
-#     640 = default/most range,  512 ~= 1.3x,  416 ~= 1.4x (misses more small /
-#     distant objects — a safety trade-off, so it's left at 640 by default).
-# Only the "torch" backend can change imgsz at run time; an ONNX graph is fixed
-# at its export resolution.
+# ── Speed (Phase 8/11) ─────────────────────────────────────────────────────
+# The evaluation harness (evaluate.py) showed object detection is ~77% of the
+# frame budget — the biggest cost by far. Measured on an i7-8650U + UHD 620 iGPU
+# (bench_openvino.py --yolo, full detect: preprocess + infer + NMS):
+#     torch  CPU  183 ms (5.5 fps)   |   ONNX-RT CPU  ~no win (overhead-bound)
+#     OpenVINO iGPU  63 ms (15.9 fps)  <- 2.9x over torch-CPU, 95% detection parity
+#     OpenVINO CPU  284 ms             <- slower than torch, like the road model
+# So YOLO joins the road model on the iGPU (both offload the CPU). Honest notes:
+# ONNX still gives YOLOv8n no CPU speedup (tiny, overhead-bound); the CPU lever
+# that helps is input resolution YOLO_IMGSZ (640 default; 512 ~= 1.3x, 416 ~= 1.4x
+# but misses small/distant objects — a safety trade-off). Only "torch" can change
+# imgsz at run time; the ONNX/OpenVINO graphs are fixed at their export size.
 YOLO_IMGSZ      = 640             # inference resolution (lower = faster, less range)
-YOLO_BACKEND    = "torch"         # "torch" (default; flexible imgsz) | "onnx" (fixed res, ~equal on CPU)
+YOLO_BACKEND    = "openvino"      # "openvino" (Intel iGPU — FASTEST here) | "torch" | "onnx"
 YOLO_ONNX_MODEL = "yolov8n.onnx"  # optional; produced by export_yolo_onnx.py
+YOLO_OPENVINO_MODEL = "yolov8n_openvino_model"  # IR dir from export_yolo_openvino.py
+YOLO_OV_DEVICE  = "intel:gpu"     # ultralytics OpenVINO device: "intel:gpu" | "intel:cpu"
 # Object detection runs EVERY frame — a hazard can appear between any two frames,
 # so we never frame-skip it (that's why only the road model, which barely moves
 # frame-to-frame, uses LEARNED_INFER_EVERY).
