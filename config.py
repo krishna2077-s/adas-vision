@@ -447,3 +447,39 @@ FCW_AUDIO_COOLDOWN_S = 1.5    # minimum seconds between chimes
 COLOR_FCW_CAUTION    = (0, 200, 255)   # amber  (BGR)
 COLOR_FCW_WARNING    = (0, 90, 255)    # orange
 COLOR_FCW_IMMINENT   = (0, 0, 255)     # red
+
+# ===========================================================================
+# MODULE 11 — Scene understanding (traffic-light state + traffic signs)
+# ===========================================================================
+
+# --- 11a: traffic-light STATE from YOLO 'traffic light' box crops -----------
+# Works out of the box (no training): read RED/AMBER/GREEN from the lit bulb by
+# HSV, vote over a few frames. OpenCV HSV: H 0-180, S/V 0-255. Advisory only.
+ENABLE_TRAFFIC_LIGHT = True
+TL_VOTE_WINDOW   = 5     # frames voted over for the controlling light's state
+TL_MIN_VALUE     = 150   # min brightness (V) for a pixel to count as 'lit'
+TL_MIN_SAT       = 90    # min saturation (S) for a lit pixel
+TL_RED_HUE_HI    = 12    # red   = hue <= this  OR  hue >= TL_RED_HUE_LO2
+TL_RED_HUE_LO2   = 165
+TL_AMBER_HUE_HI  = 33    # amber = TL_RED_HUE_HI < hue <= this
+TL_GREEN_HUE_HI  = 95    # green = TL_AMBER_HUE_HI < hue <= this
+
+# --- 11b: traffic-SIGN recognition (region proposal + tiny GTSRB CNN) --------
+# Localise sign candidates by colour+shape, classify each with a small CNN
+# trained on GTSRB (43 classes, 32x32; ~5 min on CPU via train_signs.py).
+# Gated on the weights file exactly like the learned road model: if the .pth is
+# absent (or torch is missing) the module goes inert and the pipeline is
+# unaffected. Speed-limit signs feed the advisory planner. Advisory only.
+ENABLE_SIGN_RECOGNITION = True
+SIGN_MODEL_PATH   = "gtsrb_sign_cnn.pth"   # made by train_signs.py; absent -> module off
+SIGN_INPUT_SIZE   = 32           # CNN input (matches training)
+SIGN_MIN_AREA     = 500          # min candidate area in px (rejects specks)
+SIGN_MAX_AREA_FRAC = 0.08        # max candidate area as a fraction of the frame
+SIGN_MIN_ASPECT   = 0.55         # candidate w/h must be within [min, max] (near-square)
+SIGN_MAX_ASPECT   = 1.8
+SIGN_MIN_CONF     = 0.85         # CNN softmax below this -> reject (don't guess)
+SIGN_VOTE_WINDOW  = 6            # frames a class must lead to be 'recognised'
+SIGN_VOTE_MIN     = 3            # min votes in the window to accept
+SIGN_ROI_TOP_FRAC = 0.15         # ignore proposals above/below this band (signs sit
+SIGN_ROI_BOT_FRAC = 0.75         # in the upper-middle of the view, not on the bonnet)
+COLOR_SIGN_BOX    = (0, 215, 255)   # yellow-ish (BGR)

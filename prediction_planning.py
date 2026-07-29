@@ -80,7 +80,9 @@ class Planner:
         return pts
 
     def process(self, ego_objs: List[EgoObject], lane_result,
-                ego_speed: Optional[float] = None) -> PlanResult:
+                ego_speed: Optional[float] = None,
+                speed_limit_mps: Optional[float] = None,
+                red_light: bool = False) -> PlanResult:
         ego_speed = cfg.PLAN_CRUISE_MPS if ego_speed is None else ego_speed
         preds = self._predict(ego_objs)
 
@@ -99,6 +101,18 @@ class Planner:
             elif gap < desired_gap:
                 target = cfg.PLAN_CRUISE_MPS * max(0.0, min(1.0, gap / desired_gap))
                 reason = f"follow #{lead.id} @ {gap:.0f}m (gap<{desired_gap:.0f}m)"
+
+        # ── Scene context (Module 11): a posted limit caps the cruise target;
+        #    a red/amber light eases us toward a stop. Advisory, never a command.
+        if speed_limit_mps is not None and target > speed_limit_mps:
+            target = speed_limit_mps
+            note = f"limit {speed_limit_mps * 3.6:.0f} km/h"
+            reason = note if reason == "cruise" else f"{reason}; {note}"
+        if red_light:
+            eased = cfg.PLAN_CRUISE_MPS * 0.25
+            target = min(target, eased)
+            reason = ("RED light ahead -- easing" if reason == "cruise"
+                      else f"RED light ahead -- easing; {reason}")
 
         return PlanResult(
             target_speed_mps=target, predictions=preds,

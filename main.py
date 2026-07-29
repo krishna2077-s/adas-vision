@@ -123,6 +123,22 @@ def run(
     fcw = ForwardCollisionWarning(w, h) if cfg.ENABLE_FCW else None
     last_fcw_level = 0
 
+    # ── Module 11: scene understanding (traffic-light state + traffic signs) ─
+    # Light state reads RED/AMBER/GREEN out of the box; sign recognition is inert
+    # until train_signs.py produces gtsrb_sign_cnn.pth. Both feed the advisory
+    # planner (posted limit caps cruise; a red light eases toward a stop).
+    traffic_light_reader = sign_recognizer = None
+    try:
+        if cfg.ENABLE_TRAFFIC_LIGHT:
+            from traffic_light_state import TrafficLightReader
+            traffic_light_reader = TrafficLightReader()
+        if cfg.ENABLE_SIGN_RECOGNITION:
+            from traffic_sign_recognition import SignRecognizer
+            sr = SignRecognizer(w, h)
+            sign_recognizer = sr if sr.available else None
+    except Exception as exc:
+        logger.warning(f"Scene understanding disabled ({exc}).")
+
     # ── Modules 5-9: advisory SIMULATION layers (Phase 9) ─────────────────
     # perception BEV -> sim fusion -> prediction/planning -> sim control, plus
     # driver monitoring. ALL advisory/simulated — never wired to a vehicle.
@@ -181,7 +197,8 @@ def run(
                         road_detector.reset()
                     if learned_road_detector is not None:
                         learned_road_detector.reset()
-                    for m in (bev_projector, fusion, planner, controller, driver_monitor, fcw):
+                    for m in (bev_projector, fusion, planner, controller, driver_monitor,
+                              fcw, traffic_light_reader, sign_recognizer):
                         if m is not None:
                             m.reset()
                     last_status = None
@@ -225,6 +242,24 @@ def run(
                 tracks = tracker.update(obj_result.detections)
                 annotated = tracker.annotate(annotated, tracks)
 
+            # ── Module 11: scene understanding (lights + signs) ───────
+            # Read from the RAW frame (clean colours), draw onto annotated,
+            # and derive advisory context for the planner.
+            speed_limit_mps = None
+            red_light = False
+            try:
+                if traffic_light_reader is not None and obj_result is not None:
+                    lights = traffic_light_reader.read(frame, obj_result.detections)
+                    annotated = traffic_light_reader.draw(annotated, lights)
+                    red_light = traffic_light_reader.controlling_state in ("RED", "AMBER")
+                if sign_recognizer is not None:
+                    sign_res = sign_recognizer.process(frame)
+                    annotated = sign_recognizer.draw(annotated, sign_res)
+                    if sign_res.speed_limit_kmh is not None:
+                        speed_limit_mps = sign_res.speed_limit_kmh / 3.6
+            except Exception as exc:
+                logger.debug(f"scene understanding skipped: {exc}")
+
             # ── Module 3: fuse into one decision, then draw its HUD ────
             decision = engine.process(lane_result, tracks)
             annotated = engine.draw_hud(annotated, decision)
@@ -240,7 +275,9 @@ def run(
                         fusion.process(ego_objs)
                     if planner is not None:
                         ego_spd = controller.sim_speed if controller is not None else None
-                        plan = planner.process(ego_objs, lane_result, ego_spd)
+                        plan = planner.process(ego_objs, lane_result, ego_spd,
+                                               speed_limit_mps=speed_limit_mps,
+                                               red_light=red_light)
                         annotated = planner.draw_overlay(annotated, plan)
                     if controller is not None:
                         cmd = controller.process(plan, lane_result)
