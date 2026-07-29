@@ -122,7 +122,7 @@ ENABLE_LEARNED_ROAD  = True
 #   "lraspp"    -> LRASPP MobileNetV3      (Phase 6c, ~6 fps @768x432, drivable_idd_full_best.pth)
 #   "deeplabv3" -> DeepLabV3 MobileNetV3   (Phase 7,  ~2.6 fps @768x432, richer ASPP head + augmentation)
 LEARNED_ARCH         = "lraspp"
-LEARNED_MODEL_PATH   = "drivable_idd_full_best.pth"  # trained weights (see colab/phase6c_full_idd.ipynb)
+LEARNED_MODEL_PATH   = "drivable_idd_lraspp_aug_best.pth"  # night/fog/blur/shadow fine-tune (train_local.py); was drivable_idd_full_best.pth
 LEARNED_INPUT_W      = 768     # inference resolution (matches training; lower = faster, less precise)
 LEARNED_INPUT_H      = 432
 LEARNED_NUM_THREADS  = 0       # 0 = leave torch default; set to physical cores to cap CPU use

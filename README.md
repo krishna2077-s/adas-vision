@@ -155,7 +155,7 @@ pip install -r requirements.txt
 
 This pulls in OpenCV, NumPy, Ultralytics (which brings a CPU build of PyTorch for Module 2), and torchvision (for Module 1c). On first run, YOLOv8n weights (~6 MB) download automatically. Lane detection alone needs only OpenCV + NumPy — run with `--no-objects` if you haven't installed Ultralytics yet.
 
-**Learned road model (Module 1c):** place the trained weights `drivable_idd_full_best.pth` in the repo root. They are produced by [`colab/phase6c_full_idd.ipynb`](colab/phase6c_full_idd.ipynb) (free Colab GPU) and shared via a GitHub Release rather than committed (the file is large). Without it, the system automatically falls back to the classical road detector (Module 1b) — nothing breaks, unmarked-road guidance is just less accurate.
+**Learned road model (Module 1c):** the default weights are `drivable_idd_lraspp_aug_best.pth` (the night/fog/blur/shadow fine-tune produced by [`train_local.py`](train_local.py), val hard-IoU 0.918). The base weights `drivable_idd_full_best.pth` come from [`colab/phase6c_full_idd.ipynb`](colab/phase6c_full_idd.ipynb) (val IoU 0.92). Place the `.pth` in the repo root (large files are shared via a GitHub Release, not committed) and run `python export_onnx.py` once to build the fast ONNX. Without any weights, the system automatically falls back to the classical road detector (Module 1b) — nothing breaks, unmarked-road guidance is just less accurate.
 
 ## Real-time performance
 
