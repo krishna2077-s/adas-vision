@@ -56,6 +56,7 @@ def run(
     enable_lanes: bool = True,
     enable_objects: bool = True,
     driver_cam: int = None,
+    log_path: str = None,
 ) -> None:
     """
     Main loop: reads frames, runs enabled modules, displays the combined result.
@@ -139,6 +140,15 @@ def run(
     except Exception as exc:
         logger.warning(f"Scene understanding disabled ({exc}).")
 
+    # ── Module 12: black-box drive logger (opt-in via --log PATH) ──────────
+    drive_logger = None
+    if log_path:
+        try:
+            from drive_logger import DriveLogger
+            drive_logger = DriveLogger(log_path, source, w, h, fps_src)
+        except Exception as exc:
+            logger.warning(f"Drive logger disabled ({exc}).")
+
     # ── Modules 5-9: advisory SIMULATION layers (Phase 9) ─────────────────
     # perception BEV -> sim fusion -> prediction/planning -> sim control, plus
     # driver monitoring. ALL advisory/simulated — never wired to a vehicle.
@@ -184,6 +194,7 @@ def run(
     logger.info("Starting. Press Q to quit.")
 
     annotated = None
+    frame_no = 0            # actual source frame position (resets on video loop)
     while True:
         if not paused:
             ret, frame = cap.read()
@@ -203,6 +214,7 @@ def run(
                             m.reset()
                     last_status = None
                     last_fcw_level = 0
+                    frame_no = 0
                     continue
                 logger.error("Camera read failed.")
                 break
@@ -212,6 +224,7 @@ def run(
             obj_result = None
             tracks = None
             lane_center_x = None
+            plan = cmd = fcw_state = None   # hoisted so the drive logger sees them
 
             # ── Module 1: lanes (paint) → 1c: learned road → 1b: classical ───
             if lane_detector is not None:
@@ -314,8 +327,22 @@ def run(
                 logger.info(decision.reason)
                 last_status = status
 
+            # ── Module 12: black-box drive log (opt-in via --log) ─────
+            if drive_logger is not None:
+                try:
+                    drive_logger.log(
+                        frame_no, decision, tracks, fcw=fcw_state,
+                        light_state=(traffic_light_reader.controlling_state
+                                     if traffic_light_reader is not None else None),
+                        speed_limit_kmh=(round(speed_limit_mps * 3.6)
+                                         if speed_limit_mps else None),
+                        plan=plan, control=cmd)
+                except Exception as exc:
+                    logger.debug(f"drive log skipped: {exc}")
+
             if writer:
                 writer.write(annotated)
+            frame_no += 1
 
         if annotated is not None:
             cv2.imshow(window_name, annotated)
@@ -341,6 +368,8 @@ def run(
         driver_cap.release()
     if writer:
         writer.release()
+    if drive_logger is not None:
+        drive_logger.close()
     cv2.destroyAllWindows()
 
 
@@ -379,6 +408,8 @@ Examples
     p.add_argument("--no-objects", action="store_true", help="Disable object detection.")
     p.add_argument("--driver-cam", type=int, default=None, metavar="INDEX",
                    help="Driver-facing camera index for attention monitoring (Module 9).")
+    p.add_argument("--log", type=str, default=None, metavar="PATH",
+                   help="Record a black-box drive log (.jsonl) — replay it with replay_log.py.")
 
     return p.parse_args()
 
@@ -393,4 +424,5 @@ if __name__ == "__main__":
         enable_lanes=not args.no_lanes,
         enable_objects=not args.no_objects,
         driver_cam=args.driver_cam,
+        log_path=args.log,
     )
