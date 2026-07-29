@@ -286,19 +286,9 @@ class ObjectDetector:
             if det.in_path:
                 cv2.circle(frame, det.bottom_center, 5, color, -1)
 
-        # Forward collision warning banner
-        if result.nearest_in_path and result.nearest_in_path.risk == "HIGH":
-            self._draw_fcw_banner(frame, result.nearest_in_path)
-
+        # NOTE: the forward-collision banner now lives in Module 10
+        # (forward_collision_warning.py) — a staged, TTC-based, hysteretic alert
+        # that consumes the decision engine's arbitrated hazard. The old crude
+        # binary "HIGH-risk -> red bar" banner that used to live here was retired
+        # so the two can't fight over the top-centre of the frame.
         return frame
-
-    def _draw_fcw_banner(self, frame: np.ndarray, det: Detection) -> None:
-        """Draws a Forward Collision Warning banner across the top of the frame."""
-        banner_h = 44
-        x0 = self.w // 2 - 240
-        x1 = self.w // 2 + 240
-        cv2.rectangle(frame, (x0, 6), (x1, 6 + banner_h), (0, 0, 200), -1)
-        text = f"! COLLISION WARNING  {det.label} {det.distance_m:.0f}m"
-        (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_DUPLEX, 0.7, 2)
-        cv2.putText(frame, text, (self.w // 2 - tw // 2, 6 + banner_h // 2 + th // 2),
-                    cv2.FONT_HERSHEY_DUPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
