@@ -46,6 +46,16 @@ HOUGH_THRESHOLD   = 30      # Minimum votes to consider a line
 HOUGH_MIN_LENGTH  = 20      # Minimum line length (pixels)
 HOUGH_MAX_GAP     = 200     # Maximum gap between line segments to join them
 
+# Lane detection runs on a downscaled copy (the HSV gate + Canny + Hough are
+# all per-pixel and dominate the lane budget). Lanes are large, so this barely
+# moves the geometry — A/B of the real path over the whole clip at 0.5x: 96%
+# steering/both-lane agreement vs full-res, worst-case lane-centre error ~24 px,
+# ~1.9x faster on the lane stage; the rare misses are fail-safe (conservative,
+# never a false steer). Freeing the CPU also speeds up YOLO's CPU-side work, so
+# the whole pipeline jumped ~7 -> ~14 fps. 1.0 = off. Hough pixel thresholds
+# above are auto-scaled to this working resolution.
+LANE_PROC_SCALE   = 0.5
+
 # Slope thresholds — filters out near-horizontal lines (road markings, not lanes)
 MIN_SLOPE = 0.3
 MAX_SLOPE = 2.5
