@@ -55,6 +55,8 @@ from torch import nn
 from torch.utils.data import DataLoader, Dataset
 from torchvision.models.segmentation import lraspp_mobilenet_v3_large
 
+import adverse_aug   # Phase 12: rich real-world adverse augmentation
+
 # ── Paths (kept OUT of OneDrive so 20 GB isn't uploaded to the cloud) ──────────
 IDD_TAR      = r"C:\Users\Rakesh Sharma\Downloads\idd-segmentation.tar.gz"
 DATA_DIR     = r"C:\Users\Rakesh Sharma\Downloads\idd_extracted"   # ~20 GB extracted here
@@ -209,11 +211,14 @@ def aug_shadow(img):
 
 class IDDAug(Dataset):
     """train=True  → random augmentation (the training regime).
-       hard=True   → FIXED night+fog per image (a repeatable robustness metric).
-       both False  → clean val."""
+       hard=True   → FIXED adverse per image (a repeatable robustness metric).
+       both False  → clean val.
+       rich=True   → Phase-12 augmentation (adverse_aug): rain/snow/glare/low-
+                     light + night/fog, and the tougher night+fog+rain hard val.
+                     rich=False keeps the original night/fog/blur/shadow menu."""
 
-    def __init__(self, pair_list, train=True, hard=False):
-        self.pairs, self.train, self.hard = pair_list, train, hard
+    def __init__(self, pair_list, train=True, hard=False, rich=False):
+        self.pairs, self.train, self.hard, self.rich = pair_list, train, hard, rich
 
     def __len__(self):
         return len(self.pairs)
@@ -227,18 +232,24 @@ class IDDAug(Dataset):
         if self.train:
             if random.random() < 0.5:
                 img, lbl = img[:, ::-1].copy(), lbl[:, ::-1].copy()
-            if random.random() < 0.25: img = aug_night(img)
-            if random.random() < 0.20: img = aug_fog(img)
-            if random.random() < 0.20: img = aug_motion_blur(img)
-            if random.random() < 0.20: img = aug_shadow(img)
-            if random.random() < 0.30:
-                img = np.clip(img * random.uniform(0.7, 1.3), 0, 255)
+            if self.rich:
+                img = adverse_aug.random_adverse(img, random)   # Phase 12 suite
+            else:
+                if random.random() < 0.25: img = aug_night(img)
+                if random.random() < 0.20: img = aug_fog(img)
+                if random.random() < 0.20: img = aug_motion_blur(img)
+                if random.random() < 0.20: img = aug_shadow(img)
+                if random.random() < 0.30:
+                    img = np.clip(img * random.uniform(0.7, 1.3), 0, 255)
         elif self.hard:
             # deterministic hard conditions (seeded per image) → comparable across epochs
-            st = random.getstate()
-            random.seed(10_000 + i)
-            img = aug_fog(aug_night(img))
-            random.setstate(st)
+            if self.rich:
+                img = adverse_aug.hard_adverse(img, 10_000 + i)   # night+fog+rain
+            else:
+                st = random.getstate()
+                random.seed(10_000 + i)
+                img = aug_fog(aug_night(img))
+                random.setstate(st)
         x = (img / 255.0 - MEAN) / STD
         x = torch.from_numpy(np.ascontiguousarray(x.transpose(2, 0, 1))).float()
         y = torch.from_numpy(np.ascontiguousarray((lbl > 127).astype(np.int64)))
@@ -311,6 +322,9 @@ def main():
     ap.add_argument("--batch", type=int, default=4)
     ap.add_argument("--lr", type=float, default=5e-4, help="head LR; backbone uses 0.1x this")
     ap.add_argument("--threads", type=int, default=4, help="CPU threads (lower to keep PC usable)")
+    ap.add_argument("--adverse", action="store_true",
+                    help="Phase 12: rich rain/snow/glare/low-light augmentation + tougher "
+                         "night+fog+rain hard val; writes to *_adv_* files (adopted model untouched)")
     args = ap.parse_args()
 
     torch.set_num_threads(max(1, args.threads))
@@ -318,6 +332,15 @@ def main():
     if args.smoke:
         smoke_test()
         return
+
+    # Phase 12 adverse run: keep it fully separate from the adopted model's files
+    # so a fair A/B is possible and nothing good is overwritten.
+    global OUT_WEIGHTS, CKPT
+    if args.adverse:
+        OUT_WEIGHTS = "drivable_idd_lraspp_adv_best.pth"
+        CKPT        = "train_local_adv_ckpt.pth"
+        print("[adverse] Phase 12 rich augmentation ON — best -> "
+              f"{OUT_WEIGHTS}, checkpoint -> {CKPT}")
 
     if not os.path.exists(INIT_WEIGHTS):
         raise SystemExit(f"[init] {INIT_WEIGHTS} not found in repo root — needed to fine-tune from.")
@@ -336,7 +359,8 @@ def main():
         random.seed(0)
         val_pairs = random.sample(val_pairs, args.val_cap)
     val_dl = DataLoader(IDDAug(val_pairs, train=False), batch_size=args.batch, shuffle=False, num_workers=0)
-    hard_dl = DataLoader(IDDAug(val_pairs, train=False, hard=True), batch_size=args.batch, shuffle=False, num_workers=0)
+    hard_dl = DataLoader(IDDAug(val_pairs, train=False, hard=True, rich=args.adverse),
+                         batch_size=args.batch, shuffle=False, num_workers=0)
 
     # ── model + optimizer (differential LR, gentle on the backbone) ───────
     model = build_model()
@@ -364,8 +388,9 @@ def main():
     if best_iou is None:
         print("[eval] baseline IoU (before fine-tuning) ...")
         base_clean = val_iou(model, val_dl)
-        best_iou = val_iou(model, hard_dl)      # we select on HARD (night+fog) IoU
-        print(f"[eval] baseline — clean {base_clean:.3f} | hard(night+fog) {best_iou:.3f}")
+        best_iou = val_iou(model, hard_dl)      # we select on HARD IoU
+        hard_name = "night+fog+rain" if args.adverse else "night+fog"
+        print(f"[eval] baseline — clean {base_clean:.3f} | hard({hard_name}) {best_iou:.3f}")
         torch.save(model.state_dict(), OUT_WEIGHTS)   # never end up worse than we started
 
     if start_ep >= args.epochs:
@@ -379,7 +404,7 @@ def main():
             epoch_pairs = random.sample(train_pairs, args.subset)
         else:
             epoch_pairs = train_pairs
-        train_dl = DataLoader(IDDAug(epoch_pairs, train=True), batch_size=args.batch,
+        train_dl = DataLoader(IDDAug(epoch_pairs, train=True, rich=args.adverse), batch_size=args.batch,
                               shuffle=True, num_workers=0)
 
         model.train()

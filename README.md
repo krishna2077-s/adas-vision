@@ -160,10 +160,13 @@ adas-vision/
 ├── replay_log.py        ← reconstruct a drive from the log alone (no models)
 ├── evaluate.py          ← eval harness: latency budget + drivable-area IoU
 ├── test_adas.py         ← regression tests (invariants that must not break)
-├── train_local.py       ← CPU trainer for the road model (Module 1c)
+├── train_local.py       ← CPU trainer for the road model (Module 1c; --adverse = Phase 12)
+├── adverse_aug.py       ← Phase 12: rain/snow/glare/low-light/night/fog augmentation
+├── prepare_bdd_drivable.py ← Phase 12: index BDD100K drivable data into a manifest
+├── train_bdd.py         ← Phase 12: fine-tune on real BDD100K night/weather data
 ├── train_signs.py       ← CPU trainer for the sign classifier (Module 11b, GTSRB)
-├── export_onnx.py / export_openvino.py ← ONNX + OpenVINO IR (FP16/INT8) exporters
-├── bench_speed.py / bench_openvino.py  ← per-backend speed benchmarks
+├── export_onnx.py / export_openvino.py / export_yolo_openvino.py ← ONNX + OpenVINO IR exporters
+├── bench_speed.py / bench_openvino.py  ← per-backend speed benchmarks (--yolo covers YOLO)
 ├── main.py              ← CLI entry point: runs the whole pipeline together
 └── requirements.txt
 ```
@@ -181,6 +184,27 @@ This pulls in OpenCV, NumPy, Ultralytics (which brings a CPU build of PyTorch fo
 **Optional extras (all graceful — the system runs without them):**
 - **OpenVINO iGPU acceleration** — `pip install openvino nncf`, then `python export_openvino.py`. On Intel hardware this is the fastest road-model backend (see *Real-time performance*); without it, `LEARNED_BACKEND="openvino"` falls back to ONNX then PyTorch.
 - **Traffic-sign recognition (Module 11b)** — needs `gtsrb_sign_cnn.pth`, trained in ~5 min on CPU with `python train_signs.py` once you've downloaded GTSRB (Kaggle: *GTSRB — German Traffic Sign*). Until then the sign recogniser is inert; traffic-**light** state works with no extra setup.
+
+## Adverse-condition robustness (Phase 12)
+
+Two independent ways to make drivable-area detection hold up at night and in bad weather — the model's known weak spot. Both are measured against a deliberately **tougher** hard metric than before (night **+ fog + rain**, not just night+fog); on it the Phase 6c model scores ~0.78 vs ~0.92 on the old metric, so there's genuine headroom.
+
+**1. Richer synthetic augmentation (no download).** [`adverse_aug.py`](adverse_aug.py) adds rain streaks, snow, sun/headlight glare, and low-light sensor noise to the existing night/fog/blur/shadow. A 28% share of frames stay near-clean so daytime skill isn't forgotten. Retrain on the IDD data you already have:
+
+```bash
+python train_local.py --adverse --epochs 12 --subset 2500
+```
+
+It writes to `drivable_idd_lraspp_adv_best.pth` and its own checkpoint — the adopted model is never touched, so it's a clean A/B.
+
+**2. Real BDD100K night/weather data.** Synthetic effects approximate; BDD100K has ~70k real driving frames tagged by time-of-day and weather. Download (free [BDD account](https://bdd-data.berkeley.edu) required) the **100K Images** and **Drivable Area** labels (optionally the **Detection** labels JSON for the weather/time attributes), unzip under one folder, then:
+
+```bash
+python prepare_bdd_drivable.py --bdd-root "C:\path\to\bdd100k"
+python train_bdd.py --epochs 10 --subset 4000
+```
+
+`prepare_bdd_drivable.py` auto-detects the mask's background value and tags each frame night/adverse; `train_bdd.py` fine-tunes on top of the IDD model with a **weighted sampler** (night ×3, rain/snow/fog ×2) and selects on IoU over BDD val's **real** night/adverse frames. Both scripts self-test with `--smoke` (no data needed). Result weights: `drivable_bdd_lraspp_best.pth`.
 
 ## Real-time performance
 
@@ -329,7 +353,7 @@ For the decision engine (Module 3), the settings that matter most:
 - [x] **Phase 9** — Advisory *simulation* of the full ADAS chain: bird's-eye perception, simulated sensor fusion, prediction + planning, a simulated pure-pursuit/PID controller, and driver monitoring — all overlay/simulated, **never wired to a vehicle**
 - [x] **Phase 10** — Driver-facing & rigour: staged **Forward Collision Warning** (Module 10), **traffic-light-state + traffic-sign recognition** (Module 11), an **evaluation harness** (latency budget + drivable-area IoU), a **black-box drive logger + replay** (Module 12), and a **regression-test suite**
 - [x] **Phase 11** — Speed up the bottlenecks the latency budget exposed: **YOLO on the Intel iGPU** (OpenVINO, 2.9× over torch-CPU, 95% detection parity), then the **lane detector at half-resolution** (per-pixel HSV/Canny/Hough, 96% agreement, ~1.9× — and freeing the CPU sped up YOLO too). Honest end-to-end **3.1 → ~14 fps**. Next: BDD100K night + weather data
-- [ ] **Phase 12** (next) — BDD100K night + weather data to push drivable-area robustness further
+- [~] **Phase 12** (in progress) — Adverse-condition robustness on two fronts: (a) a **rich synthetic augmentation suite** (`adverse_aug.py` — rain, snow, glare, low-light sensor noise on top of night/fog) driving an IDD retrain (`train_local.py --adverse`) selected on a tougher **night+fog+rain** metric; and (b) a **BDD100K pipeline** (`prepare_bdd_drivable.py` + `train_bdd.py`) that fine-tunes on **real** night/rain/snow driving data with a night/weather-weighted sampler and a **real-adverse** validation metric. On the new hard metric the Phase 6c model scores just 0.78 (vs ~0.92 night+fog) — real headroom to close
 
 ## Design principles
 
