@@ -147,9 +147,29 @@ LEARNED_FILL_ALPHA   = 0.40
 #                frame from the cached mask.
 #   INPUT_W/H    (above) drop to 512x288 for ~2x, 384x216 for ~4x (less precise).
 # Stacked, these turn ~3 fps into real-time on a plain laptop CPU.
-LEARNED_BACKEND      = "onnx"   # "onnx" (fast) | "torch"
+LEARNED_BACKEND      = "openvino"   # "openvino" (Intel iGPU — FASTEST here) | "onnx" (portable) | "torch"
 LEARNED_ONNX_PATH    = "drivable_idd_lraspp_768x432.onnx"  # made by export_onnx.py
 LEARNED_INFER_EVERY  = 3        # run the CNN every Nth frame (1 = every frame)
+
+# ── OpenVINO backend (Phase 8: Intel iGPU + INT8) ────────────────────────────
+# "openvino" runs the model through Intel's runtime, which can use the otherwise
+# idle integrated GPU. Produced from the ONNX by export_openvino.py (needs
+# `pip install openvino nncf`). Fully graceful: if openvino isn't installed or no
+# IR is present it falls back to ONNX, then PyTorch, so a clean checkout is
+# unaffected. LEARNED_OV_MODEL may point at an IR .xml; if it's missing the
+# backend tries the FP16/INT8 IRs, then reads the .onnx directly (FP32).
+#
+# Measured on this i7-8650U + UHD 620 iGPU (bench_openvino.py, 768x432):
+#     PyTorch CPU  264 ms   |   ONNX-RT CPU  124 ms
+#     OpenVINO FP16 GPU  43 ms  (23 fps)  <- default; 2.9x over ONNX, 6.1x over torch
+#     OpenVINO INT8 GPU  46 ms  -- NO benefit here (the UHD 620 has weak INT8);
+#     OpenVINO on CPU    ~365 ms -- slower than ONNX-RT, so CPU stays on ONNX.
+# So on this box FP16-on-iGPU wins and frees the CPU for YOLO. INT8 is still
+# exported (it helps on VNNI CPUs / NPUs) and parity-checked at 100%.
+LEARNED_OV_DEVICE    = "GPU"    # "GPU" (Intel iGPU) | "CPU" | "AUTO"; auto-falls-back to CPU
+LEARNED_OV_MODEL     = "drivable_idd_lraspp_768x432_ov_fp16.xml"   # preferred IR (FP16, fastest on the iGPU)
+LEARNED_OV_MODEL_FP16 = "drivable_idd_lraspp_768x432_ov_fp16.xml"
+LEARNED_OV_MODEL_INT8 = "drivable_idd_lraspp_768x432_ov_int8.xml"  # alt: better on VNNI CPUs / NPUs
 
 # ---------------------------------------------------------------------------
 # Lane smoothing

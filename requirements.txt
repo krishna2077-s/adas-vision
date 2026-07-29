@@ -19,3 +19,12 @@ torchvision>=0.15.0
 # absent, the app falls back to the PyTorch backend automatically.
 onnxruntime>=1.16.0
 onnx>=1.15.0
+
+# ── Phase 8: OpenVINO iGPU acceleration (optional, Intel hardware) ────────────
+# openvino runs the road model on the Intel integrated GPU — measured ~2.9x over
+# ONNX-RT and 6.1x over PyTorch on an i7-8650U + UHD 620, freeing the CPU for
+# YOLO. nncf produces the INT8 IR (helps on VNNI CPUs / NPUs). Both optional and
+# fully graceful: without them LEARNED_BACKEND="openvino" falls back to ONNX then
+# PyTorch. IR is produced by export_openvino.py; benchmark with bench_openvino.py.
+openvino>=2025.0
+nncf>=2.9.0

@@ -17,6 +17,15 @@ logs/
 *.onnx
 *.onnx.data
 
+# OpenVINO IR (Phase 8) — large model artifacts produced by export_openvino.py;
+# share via a Release, not the repo. Plus the Intel GPU compiler's scratch dump.
+*_ov_fp16.xml
+*_ov_fp16.bin
+*_ov_int8.xml
+*_ov_int8.bin
+kernel.errors.txt
+*.blob
+
 # Python
 __pycache__/
 *.py[cod]

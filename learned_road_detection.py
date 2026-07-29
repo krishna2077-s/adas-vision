@@ -74,6 +74,9 @@ class LearnedRoadDetector:
         self.model: Optional[nn.Module] = None
         self.session = None                       # ONNX Runtime session (if backend=onnx)
         self._onnx_input = None
+        self.compiled = None                      # OpenVINO compiled model (if backend=openvino)
+        self._ov_out = None
+        self.ov_device = None                     # actual device OpenVINO placed us on
         self.backend = "torch"
         self.available = False
 
@@ -105,10 +108,76 @@ class LearnedRoadDetector:
         raise ValueError(f"unknown LEARNED_ARCH '{cfg.LEARNED_ARCH}' (use 'lraspp' or 'deeplabv3')")
 
     def _load_model(self) -> None:
-        """Loads the requested backend (onnx → torch → unavailable), in order."""
-        if getattr(cfg, "LEARNED_BACKEND", "torch").lower() == "onnx" and self._load_onnx():
+        """Loads the requested backend, degrading gracefully:
+        openvino → onnx → torch → unavailable. A missing runtime or model file at
+        any tier silently drops to the next, so a clean checkout still runs."""
+        backend = getattr(cfg, "LEARNED_BACKEND", "torch").lower()
+        if backend == "openvino" and self._load_openvino():
+            return
+        if backend in ("openvino", "onnx") and self._load_onnx():
             return
         self._load_torch()
+
+    def _load_openvino(self) -> bool:
+        """Bring up the OpenVINO backend on the configured device. Returns True on success.
+
+        Prefers the INT8 IR, then the FP16 IR, then reads the ONNX directly (still
+        device-accelerated, FP32). Falls back CPU if the requested device (e.g. the
+        iGPU) can't compile the model."""
+        try:
+            import openvino as ov
+        except ImportError:
+            logger.info("openvino not installed — trying ONNX backend.")
+            return False
+
+        # Model source, in preference order: the configured IR, then the FP16 IR,
+        # the INT8 IR, and finally the raw ONNX (still device-accelerated, FP32).
+        candidates = [
+            getattr(cfg, "LEARNED_OV_MODEL", ""),
+            getattr(cfg, "LEARNED_OV_MODEL_FP16", ""),
+            getattr(cfg, "LEARNED_OV_MODEL_INT8", ""),
+            getattr(cfg, "LEARNED_ONNX_PATH", ""),
+        ]
+        seen, ordered = set(), []
+        for p in candidates:
+            if p and p not in seen:
+                seen.add(p); ordered.append(p)
+        model_path = next((p for p in ordered if os.path.exists(p)), "")
+        if not model_path:
+            logger.info("No OpenVINO IR or ONNX found — trying ONNX backend.")
+            return False
+
+        try:
+            core = ov.Core()
+            model = core.read_model(model_path)
+            want = getattr(cfg, "LEARNED_OV_DEVICE", "GPU").upper()
+            avail = core.available_devices
+            # Requested device, else CPU. (GPU here = the Intel iGPU.)
+            device = want if (want in avail or want == "AUTO") else "CPU"
+            try:
+                self.compiled = core.compile_model(model, device)
+            except Exception as exc:
+                if device != "CPU":
+                    logger.warning(f"OpenVINO device '{device}' unavailable ({exc}) — using CPU.")
+                    device = "CPU"
+                    self.compiled = core.compile_model(model, "CPU")
+                else:
+                    raise
+            self._ov_out = self.compiled.output(0)
+            self.ov_device = device
+            self.backend = "openvino"
+            self.available = True
+            low = model_path.lower()
+            kind = "INT8" if "int8" in low else "FP16" if "fp16" in low else "FP32/onnx"
+            logger.info(
+                f"LearnedRoadDetector ready (OpenVINO {kind} on {device}) — '{model_path}', "
+                f"{cfg.LEARNED_INPUT_W}x{cfg.LEARNED_INPUT_H} input, "
+                f"infer every {cfg.LEARNED_INFER_EVERY} frame(s)")
+            return True
+        except Exception as exc:
+            logger.warning(f"OpenVINO backend failed to load ({exc}) — trying ONNX backend.")
+            self.compiled = None
+            return False
 
     def _load_onnx(self) -> bool:
         """Tries to bring up the ONNX Runtime backend. Returns True on success."""
@@ -246,7 +315,10 @@ class LearnedRoadDetector:
         x = (img.astype(np.float32) / 255.0 - _MEAN) / _STD
         x = np.ascontiguousarray(x.transpose(2, 0, 1))[None]      # (1, 3, H, W)
 
-        if self.backend == "onnx":
+        if self.backend == "openvino":
+            out = self.compiled(x)[self._ov_out]                     # (1, 2, H, W)
+            pred = out.argmax(1).squeeze(0).astype(np.uint8)
+        elif self.backend == "onnx":
             out = self.session.run(None, {self._onnx_input: x})[0]   # (1, 2, H, W)
             pred = out.argmax(1).squeeze(0).astype(np.uint8)
         else:
