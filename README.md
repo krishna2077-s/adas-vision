@@ -2,7 +2,7 @@
 
 An open, low-cost Advanced Driver Assistance System built to run on hardware people already own — a dashcam or webcam and a standard laptop CPU. No GPU, no cloud, no dedicated hardware.
 
-**This release: painted-lane detection, learned drivable-area segmentation for unmarked roads (a compact CNN trained on the full Indian Driving Dataset), object detection with collision warnings, multi-object tracking with stable IDs, and a decision engine that fuses it all into a single arbitrated driving action every frame.**
+**This release: painted-lane detection, learned drivable-area segmentation for unmarked roads (a compact CNN trained on the full Indian Driving Dataset), object detection, multi-object tracking with stable IDs, a decision engine that fuses it all into a single arbitrated driving action every frame, a staged Forward Collision Warning, traffic-light-state + traffic-sign recognition, OpenVINO acceleration on the Intel iGPU, and an evaluation harness + black-box drive logger to keep it all honest.**
 
 > ## ⚠️ Safety notice — read this first
 >
@@ -57,7 +57,7 @@ An open, low-cost Advanced Driver Assistance System built to run on hardware peo
 - Detects road-relevant objects with YOLOv8n — cars, trucks, buses, pedestrians, two-wheelers, animals
 - Estimates each object's distance from a monocular bounding-box heuristic
 - Determines which objects are in the vehicle's forward path (perspective-aware corridor)
-- Assigns LOW / MEDIUM / HIGH risk and raises a Forward Collision Warning banner
+- Assigns LOW / MEDIUM / HIGH risk (the driver-facing collision alert is now Module 10)
 
 **Object tracking (Module 4)**
 - Gives each detected object a **stable ID** across frames (greedy-IoU association, no extra dependencies)
@@ -72,7 +72,17 @@ An open, low-cost Advanced Driver Assistance System built to run on hardware peo
 - **Degraded mode**: when lanes are lost it says so and behaves conservatively instead of pretending certainty
 - Emits one plain-English **reason** per frame, e.g. `[R2] BRAKE: car closing, 7.1m TTC 2.1s`
 
-All three modules run together at interactive frame rates on a standard laptop CPU — no GPU.
+**Forward Collision Warning (Module 10) — the driver-facing alert**
+- A staged, escalating collision banner: `CAUTION → WARNING → IMMINENT`, driven by the hazard's live time-to-collision (and a hard distance floor for the imminent case)
+- **Consumes the same hazard the decision engine already arbitrated** — a single source of truth, so the banner and the brain can never disagree about which object matters
+- Escalates instantly, releases one level at a time (anti-flicker), draws a live TTC countdown, a corner bracket on the threat, a flashing frame border when imminent, and an optional (opt-in) chime
+
+**Scene understanding (Module 11) — signs & lights**
+- **Traffic-light state** — reads `RED / AMBER / GREEN` from YOLO's traffic-light boxes by HSV on the lit bulb (with a geometric prior + temporal vote); says `UNKNOWN` in the dark rather than guessing. Works out of the box, no training.
+- **Traffic-sign recognition** — colour/shape region proposals → a small CNN (GTSRB, 43 classes) → temporal vote; speed-limit signs latch as the active limit. Gated on its weights file exactly like the road model — inert until you train it (`train_signs.py`, ~5 min on CPU), so a clean checkout is unaffected.
+- Both feed the advisory planner: a posted limit caps the cruise target; a red/amber light eases toward a stop.
+
+All of these run together at interactive frame rates on a standard laptop CPU — no GPU (and with OpenVINO, the road model moves onto the Intel iGPU; see *Real-time performance*).
 
 ## How it works
 
@@ -143,6 +153,17 @@ adas-vision/
 ├── prediction_planning.py ← Module 7: Planner             (prediction + advisory plan)
 ├── control_sim.py       ← Module 8: SimController         (simulated steering/PID — never wired)
 ├── driver_monitoring.py ← Module 9: DriverMonitor         (attention: driver-facing cam)
+├── forward_collision_warning.py ← Module 10: ForwardCollisionWarning (staged TTC alert)
+├── traffic_light_state.py       ← Module 11a: TrafficLightReader (RED/AMBER/GREEN)
+├── traffic_sign_recognition.py  ← Module 11b: SignRecognizer  (GTSRB CNN + proposals)
+├── drive_logger.py      ← Module 12: DriveLogger          (black-box .jsonl recorder)
+├── replay_log.py        ← reconstruct a drive from the log alone (no models)
+├── evaluate.py          ← eval harness: latency budget + drivable-area IoU
+├── test_adas.py         ← regression tests (invariants that must not break)
+├── train_local.py       ← CPU trainer for the road model (Module 1c)
+├── train_signs.py       ← CPU trainer for the sign classifier (Module 11b, GTSRB)
+├── export_onnx.py / export_openvino.py ← ONNX + OpenVINO IR (FP16/INT8) exporters
+├── bench_speed.py / bench_openvino.py  ← per-backend speed benchmarks
 ├── main.py              ← CLI entry point: runs the whole pipeline together
 └── requirements.txt
 ```
@@ -157,23 +178,35 @@ This pulls in OpenCV, NumPy, Ultralytics (which brings a CPU build of PyTorch fo
 
 **Learned road model (Module 1c):** the default weights are `drivable_idd_lraspp_aug_best.pth` (the night/fog/blur/shadow fine-tune produced by [`train_local.py`](train_local.py), val hard-IoU 0.918). The base weights `drivable_idd_full_best.pth` come from [`colab/phase6c_full_idd.ipynb`](colab/phase6c_full_idd.ipynb) (val IoU 0.92). Place the `.pth` in the repo root (large files are shared via a GitHub Release, not committed) and run `python export_onnx.py` once to build the fast ONNX. Without any weights, the system automatically falls back to the classical road detector (Module 1b) — nothing breaks, unmarked-road guidance is just less accurate.
 
+**Optional extras (all graceful — the system runs without them):**
+- **OpenVINO iGPU acceleration** — `pip install openvino nncf`, then `python export_openvino.py`. On Intel hardware this is the fastest road-model backend (see *Real-time performance*); without it, `LEARNED_BACKEND="openvino"` falls back to ONNX then PyTorch.
+- **Traffic-sign recognition (Module 11b)** — needs `gtsrb_sign_cnn.pth`, trained in ~5 min on CPU with `python train_signs.py` once you've downloaded GTSRB (Kaggle: *GTSRB — German Traffic Sign*). Until then the sign recogniser is inert; traffic-**light** state works with no extra setup.
+
 ## Real-time performance
 
-The learned road model (Module 1c) has two stackable, retraining-free speed levers, both on by default in [config.py](config.py):
+The learned road model (Module 1c) has three stackable, retraining-free speed levers:
 
-- **ONNX Runtime backend** (`LEARNED_BACKEND = "onnx"`) — runs the *same* trained weights ~2.8× faster than PyTorch on CPU, with byte-identical segmentation. Export once after training:
+- **OpenVINO on the Intel iGPU** (`LEARNED_BACKEND = "openvino"`, the default) — runs the *same* network on the integrated GPU that otherwise sits idle, and in doing so frees the CPU for YOLO (the real bottleneck — see below). Export the IR once, then benchmark:
   ```bash
-  python export_onnx.py
+  python export_openvino.py     # ONNX -> FP16 IR + NNCF INT8 IR (needs: pip install openvino nncf)
+  python bench_openvino.py      # times every backend on your machine
   ```
+- **ONNX Runtime backend** (`LEARNED_BACKEND = "onnx"`) — the portable fast path: runs the same weights ~2.8× faster than PyTorch on CPU, byte-identical segmentation, no Intel hardware needed. Export with `python export_onnx.py`.
 - **Frame-skip** (`LEARNED_INFER_EVERY = 3`) — runs the CNN every Nth frame and reuses the mask between (the road barely moves frame-to-frame); the centreline still updates every frame. ~3× effective throughput.
 
-Together they take the model from ~2 fps to **~17 effective fps** on a laptop CPU — real-time-smooth. Drop `LEARNED_INPUT_W/H` to 512×288 for roughly 2× more. Benchmark on your own machine:
+Measured on an **i7-8650U + Intel UHD 620 iGPU** (`bench_openvino.py`, 768×432):
 
-```bash
-python bench_speed.py
-```
+| backend | device | ms/frame | raw fps | eff. fps (skip 3) |
+|---|---|---:|---:|---:|
+| PyTorch | CPU | 264 | 3.8 | 11 |
+| ONNX Runtime | CPU | 124 | 8.0 | 24 |
+| **OpenVINO FP16** | **iGPU** | **43** | **23** | **69** |
+| OpenVINO INT8 | iGPU | 46 | 22 | 66 |
+| OpenVINO FP16/INT8 | CPU | ~365 | 2.7 | 8 |
 
-If the `.onnx` file or `onnxruntime` is absent, the system falls back to the PyTorch backend automatically — nothing breaks.
+The iGPU path is **2.9× over ONNX-CPU and 6.1× over PyTorch**, at 100% argmax parity with the FP32 reference (and 0.91 drivable-IoU on held-out IDD val — no accuracy regression). Two honest findings recorded alongside: **INT8 gives no benefit on this iGPU** (the UHD 620 lacks strong INT8 acceleration; FP16 ties or beats it — INT8 is still exported because it helps on VNNI CPUs / NPUs), and **OpenVINO's *CPU* plugin is slower than ONNX Runtime here**, so CPU-only machines should stay on `"onnx"`.
+
+The whole backend chain is graceful: `openvino` → `onnx` → `torch`. If OpenVINO isn't installed, or no IR / `.onnx` is present, it silently falls to the next tier, so a clean checkout still runs.
 
 **Object detection (Module 2) is deliberately *not* sped up the same way.** Two honest reasons:
 
@@ -201,6 +234,24 @@ python driver_monitor_demo.py
 
 > These layers exist to show the *shape* of a full ADAS in software. They do **not** make the system safe to drive with — a single camera, a best-effort CPU, simulated sensors, and no certification are exactly why it stays advisory. Re-read the safety notice above.
 
+## Evaluation & recording
+
+Measurement and reconstruction, so the system is defensible rather than just demo-able.
+
+**Evaluation harness** — `python evaluate.py`:
+- **Latency budget** — times every module over real frames so the bottleneck is *measured, not guessed*. On the reference machine: **YOLO is 77% of the frame** (~249 ms), lane 13%, the iGPU road model just 9% amortised — which is exactly why the road model was moved to the iGPU and why YOLO is the next thing to optimise.
+- **Drivable-area IoU** — scores the *currently deployed* road backend on held-out IDD val, so a model swap or a quantisation step can be checked for a silent accuracy regression. The OpenVINO/FP16 path scores mean **0.906** / pooled **0.911** IoU — matching training.
+
+**Black-box drive logger** — `python main.py --video dashcam.mp4 --log drive.jsonl` records one compact JSON line per frame (what it saw + decided). Reconstruct the whole drive from the log *alone* — no models re-run:
+
+```bash
+python replay_log.py drive.jsonl                                   # drive summary
+python replay_log.py drive.jsonl --video dashcam.mp4 --save replay.mp4   # rebuild the annotated video
+python replay_log.py drive.jsonl --video dashcam.mp4 --dump 300 f.jpg    # one reconstructed frame
+```
+
+**Regression tests** — `python test_adas.py` (also `pytest`-discoverable) guards the safety-relevant invariants: threshold ordering, decision-engine escalation + single-frame-spurious rejection, FCW monotonic escalation + hysteretic release, tracker ID stability + ghost rejection, traffic-light state, and live OpenVINO-vs-ONNX mask parity.
+
 ## Usage
 
 ```bash
@@ -218,6 +269,9 @@ python main.py --video dashcam.mp4 --no-lanes
 
 # Debug overlay (ROI + raw Hough lines) and save annotated output
 python main.py --video dashcam.mp4 --debug --save output.mp4
+
+# Record a black-box drive log (replay it later with replay_log.py)
+python main.py --video dashcam.mp4 --log drive.jsonl
 ```
 
 Controls while running:
@@ -237,6 +291,8 @@ Controls while running:
 - `#id` tags — the stable tracker ID on each confirmed object (watch it stay on the same object)
 - **Top-left HUD** — lane FPS, pixel offset, confidence, per-lane status, steering
 - **Top-right panel** — the fused decision: longitudinal state (colour-coded, flashes on EMERGENCY), brake bar, lateral action, nearest-in-path object (with its `#id`, distance + TTC), live tracked count, and a `DEGRADED` chip when inputs are untrusted
+- **Top-centre banner** — the Forward Collision Warning (Module 10): amber `COLLISION RISK` → orange `COLLISION WARNING` → flashing red `BRAKE`, with a live TTC countdown and a bracket on the threat
+- **Top-left chips** — traffic-light state (`LIGHT: RED/AMBER/GREEN`) and, when a limit sign is recognised, a speed-limit roundel
 - **Bottom reason strip** — the one-line, rule-tagged explanation for the current action
 - Bottom bar — drift indicator (fills red on hard drift)
 
@@ -268,8 +324,10 @@ For the decision engine (Module 3), the settings that matter most:
 - [x] **Phase 5** — Unmarked-road guidance: hybrid paint + drivable-surface following (validated on hill, city and highway footage)
 - [x] **Phase 6** — Learned drivable-area segmentation (LRASPP MobileNetV3 trained on the full IDD, val IoU 0.92) — trained free on Colab, **runs on CPU** at run time, integrated as Module 1c
 - [ ] **Phase 7** (in progress) — Stronger model: DeepLabV3-MobileNetV3 (ASPP multi-scale head) + night/fog/blur/shadow augmentation + Dice loss, targeting the haze / night / hill weak spots. `colab/phase7_deeplab_aug.ipynb`; loadable via `LEARNED_ARCH = "deeplabv3"`
-- [~] **Phase 8** — Real-time inference: **ONNX Runtime CPU backend (~2.8× over PyTorch, identical output) + frame-skip (~3×)** → real-time drivable-area on a plain laptop CPU (done); next: OpenVINO on the Intel iGPU + INT8, more data (BDD100K night + weather)
+- [x] **Phase 8** — Real-time inference: **ONNX Runtime CPU backend (~2.8× over PyTorch) + frame-skip (~3×)**, then **OpenVINO on the Intel iGPU (2.9× over ONNX-CPU, 6.1× over PyTorch, 100% parity)** with an INT8 export path — real-time drivable-area that also frees the CPU for YOLO. Remaining: more data (BDD100K night + weather)
 - [x] **Phase 9** — Advisory *simulation* of the full ADAS chain: bird's-eye perception, simulated sensor fusion, prediction + planning, a simulated pure-pursuit/PID controller, and driver monitoring — all overlay/simulated, **never wired to a vehicle**
+- [x] **Phase 10** — Driver-facing & rigour: staged **Forward Collision Warning** (Module 10), **traffic-light-state + traffic-sign recognition** (Module 11), an **evaluation harness** (latency budget + drivable-area IoU), a **black-box drive logger + replay** (Module 12), and a **regression-test suite**
+- [ ] **Phase 11** (next) — Speed up the real bottleneck the latency budget exposed: **YOLO on the iGPU** (OpenVINO) / INT8, and BDD100K night + weather data
 
 ## Design principles
 
