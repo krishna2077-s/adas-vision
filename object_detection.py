@@ -23,6 +23,7 @@ import cv2
 import numpy as np
 
 import config as cfg
+from frame_guard import is_valid_frame
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +173,10 @@ class ObjectDetector:
         Returns:
             (ObjectDetectionResult, annotated_frame)
         """
+        # Defensive: a malformed frame yields no detections, never a crash.
+        if not is_valid_frame(frame):
+            return ObjectDetectionResult(), frame
+
         if lane_center_x is None:
             lane_center_x = self.w // 2
 

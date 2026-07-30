@@ -21,6 +21,7 @@ import cv2
 import numpy as np
 
 import config as cfg
+from frame_guard import is_valid_frame
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +131,13 @@ class LaneDetector:
         Returns:
             (LaneDetectionResult, annotated_frame)
         """
-        # ── 0. Downscale for detection (see __init__) ─────────────────
+        # ── 0. Frame health guard ─────────────────────────────────────
+        # Defensive: a malformed frame must yield "no lane" (confidence 0),
+        # never an exception. The decision engine then goes conservative.
+        if not is_valid_frame(frame):
+            return LaneDetectionResult(frame_center_x=self.w // 2), frame
+
+        # ── 0b. Downscale for detection (see __init__) ────────────────
         if self._scale != 1.0:
             small = cv2.resize(frame, (self._sw, self._sh), interpolation=cv2.INTER_AREA)
         else:

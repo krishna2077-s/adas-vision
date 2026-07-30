@@ -363,6 +363,32 @@ def test_config_safety_bounds():
 
 
 # ---------------------------------------------------------------------------
+# frame guard — malformed input must degrade, never crash
+# ---------------------------------------------------------------------------
+
+def test_frame_guard_truth_table():
+    from frame_guard import is_valid_frame
+    assert is_valid_frame(np.zeros((720, 1280, 3), np.uint8))          # good BGR frame
+    assert not is_valid_frame(None)                                    # dropped grab
+    assert not is_valid_frame("not an array")
+    assert not is_valid_frame(np.zeros((720, 1280), np.uint8))         # no channel axis
+    assert not is_valid_frame(np.zeros((720, 1280, 4), np.uint8))      # wrong channel count
+    assert not is_valid_frame(np.zeros((1, 1, 3), np.uint8))           # degenerate size
+    assert not is_valid_frame(np.zeros((720, 1280, 3), np.float32))    # wrong dtype
+
+
+def test_lane_detector_survives_malformed_frame():
+    from lane_detection import LaneDetector
+    lane = LaneDetector(frame_width=1280, frame_height=720)
+    for bad in (None, np.zeros((10, 10), np.uint8), np.zeros((4, 4, 3), np.float32)):
+        res, _ = lane.process(bad)
+        assert res.confidence == 0.0, "malformed frame produced a lane lock"
+    # a healthy frame still returns a usable result object (no lock on black, but no crash)
+    res, _ = lane.process(np.zeros((720, 1280, 3), np.uint8))
+    assert res is not None and res.frame_center_x == 640
+
+
+# ---------------------------------------------------------------------------
 # runner
 # ---------------------------------------------------------------------------
 

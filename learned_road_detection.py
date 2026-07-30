@@ -37,6 +37,7 @@ from torchvision.models.segmentation import (
 )
 
 import config as cfg
+from frame_guard import is_valid_frame
 from lane_detection import LaneDetectionResult
 
 logger = logging.getLogger(__name__)
@@ -264,6 +265,12 @@ class LearnedRoadDetector:
         if not self.available:
             result.confidence = 0.0
             result.steering = "UNKNOWN -- learned model unavailable"
+            return result, canvas
+
+        # Defensive: a malformed frame yields "no road lock", never a crash.
+        if not is_valid_frame(frame):
+            result.confidence = 0.0
+            result.steering = "UNKNOWN -- invalid frame"
             return result, canvas
 
         # Frame-skip: only run the CNN every Nth frame; reuse the mask between.

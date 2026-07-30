@@ -37,6 +37,7 @@ import cv2
 import config as cfg
 from decision_engine import DecisionEngine
 from forward_collision_warning import ForwardCollisionWarning
+from frame_guard import is_valid_frame
 from lane_detection import LaneDetector
 from road_detection import RoadDetector
 from tracker import MultiObjectTracker
@@ -195,6 +196,7 @@ def run(
 
     annotated = None
     frame_no = 0            # actual source frame position (resets on video loop)
+    bad_frames = 0         # consecutive malformed frames (capture glitches)
     while True:
         if not paused:
             ret, frame = cap.read()
@@ -218,6 +220,20 @@ def run(
                     continue
                 logger.error("Camera read failed.")
                 break
+
+            # ── Frame health guard ────────────────────────────────────
+            # A successful read() can still hand back a malformed buffer
+            # (wrong shape/dtype, 1-px). Never feed that to perception —
+            # drop it and let the engine hold. Bail only if it never recovers.
+            if not is_valid_frame(frame):
+                bad_frames += 1
+                if bad_frames % 30 == 1:
+                    logger.warning(f"Dropping malformed frame (#{bad_frames}); holding last decision.")
+                if bad_frames > 300:
+                    logger.error("Too many consecutive malformed frames — stopping.")
+                    break
+                continue
+            bad_frames = 0
 
             annotated = frame
             lane_result = None
