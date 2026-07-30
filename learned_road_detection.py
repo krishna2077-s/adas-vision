@@ -278,7 +278,8 @@ class LearnedRoadDetector:
         # stays smooth while the expensive inference runs ~1/N as often.
         every = max(1, getattr(cfg, "LEARNED_INFER_EVERY", 1))
         if self._last_mask is None or self._skip_ctr <= 0:
-            self._last_mask = self._infer_mask(frame)
+            # clean once per real inference; the cleaned mask is cached + reused
+            self._last_mask = self._clean_mask(self._infer_mask(frame))
             self._skip_ctr = every - 1
         else:
             self._skip_ctr -= 1
@@ -335,6 +336,38 @@ class LearnedRoadDetector:
 
         mask = cv2.resize(pred, (self.w, self.h), interpolation=cv2.INTER_NEAREST) * 255
         return mask
+
+    def _clean_mask(self, mask: np.ndarray) -> np.ndarray:
+        """
+        Tidy the raw drivable mask for corridor-following: morphological open to
+        drop speckle, close to fill pinholes, then keep only sizeable connected
+        blobs (the ego corridor is the big region ahead; scattered far fragments
+        are noise, seen on ~9% of frames). Falls back to the single largest blob
+        so a valid-but-small road is never blanked. Operates on the corridor mask
+        only — the raw model output (IoU / OpenVINO-ONNX parity) is untouched.
+        """
+        if not getattr(cfg, "LEARNED_MASK_CLEAN", True):
+            return mask
+        binm = (mask > 0).astype(np.uint8)
+        if int(binm.sum()) == 0:
+            return mask
+        k = np.ones((5, 5), np.uint8)
+        binm = cv2.morphologyEx(binm, cv2.MORPH_OPEN, k)     # drop specks
+        binm = cv2.morphologyEx(binm, cv2.MORPH_CLOSE, k)    # fill pinholes
+        num, lab, stats, _ = cv2.connectedComponentsWithStats(binm, connectivity=8)
+        if num <= 1:                                          # all background after open
+            return (binm * 255).astype(np.uint8)
+        min_area = getattr(cfg, "LEARNED_MASK_MIN_BLOB_FRAC", 0.004) * binm.size
+        keep = np.zeros_like(binm)
+        kept = 0
+        for i in range(1, num):
+            if stats[i, cv2.CC_STAT_AREA] >= min_area:
+                keep[lab == i] = 1
+                kept += 1
+        if kept == 0:                                        # nothing big enough -> largest
+            largest = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+            keep[lab == largest] = 1
+        return (keep * 255).astype(np.uint8)
 
     def _centreline(self, mask: np.ndarray) -> Tuple[List[Tuple[int, int, int]], float]:
         """

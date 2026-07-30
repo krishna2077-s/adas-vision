@@ -140,6 +140,12 @@ LEARNED_HORIZON_FRAC = 0.35    # ignore rows above this (far field / sky)
 LEARNED_BONNET_FRAC  = 0.93    # ignore the bonnet below this
 LEARNED_MIN_COVERAGE = 0.20    # min centreline row coverage to trust the model
 LEARNED_MIN_ROWS     = 8       # min centreline points to trust the model
+# Corridor mask cleanup (Phase 13): the raw mask speckles on ~9% of frames (up
+# to 14 fragments). Open+close then keep sizeable blobs so the centreline is fit
+# to a clean corridor, not scattered specks. Applied to the corridor mask only —
+# the raw model output (IoU / OV-ONNX parity) is untouched.
+LEARNED_MASK_CLEAN   = True
+LEARNED_MASK_MIN_BLOB_FRAC = 0.004   # keep connected blobs >= 0.4% of the frame
 LEARNED_LOOKAHEAD_FRAC = 0.66  # centreline point used as the steering target
 LEARNED_SMOOTHING_ALPHA = 0.25 # EMA on the look-ahead x (steadier steering)
 LEARNED_CONF_CAP     = 0.80    # cap on reported confidence (est. drivable-area, not paint)
