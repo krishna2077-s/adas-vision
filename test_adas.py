@@ -235,6 +235,134 @@ def test_road_backend_parity():
 
 
 # ---------------------------------------------------------------------------
+# decision engine — deeper safety invariants
+# ---------------------------------------------------------------------------
+
+@dataclass
+class FakeLane:
+    """Minimal stand-in for a LaneDetectionResult (only fields the engine reads)."""
+    confidence: float = 1.0
+    offset_px: int = 0
+    lane_center_x: Optional[int] = 640
+
+
+def _drive_to_emergency(eng):
+    hz = FakeTrack(id=3, smoothed_distance_m=4.0, closing_speed_mps=9.0, ttc_s=0.9,
+                   risk="HIGH", center=(640, 520))
+    d = None
+    for _ in range(6):
+        d = eng.process(None, [hz])
+    return d
+
+
+def test_decision_emergency_latches():
+    """Once EMERGENCY, a few clear frames must NOT release it (safety latch)."""
+    eng = _engine()
+    d = _drive_to_emergency(eng)
+    assert d.longitudinal_level == 4, f"did not reach EMERGENCY: {d.longitudinal}"
+    for _ in range(3):                       # hazard vanishes for 3 frames (< latch)
+        d = eng.process(None, [])
+    assert d.longitudinal_level == 4, f"emergency released after only 3 clear frames ({d.longitudinal})"
+
+
+def test_decision_release_is_gradual_and_reaches_clear():
+    """De-escalation is one level at a time, and the system does eventually clear."""
+    eng = _engine()
+    _drive_to_emergency(eng)
+    levels = [eng.process(None, []).longitudinal_level for _ in range(120)]
+    for a, b in zip(levels, levels[1:]):
+        assert b >= a - 1, f"committed level dropped {a}->{b} (more than one step in a frame)"
+    assert levels[-1] == 0, f"never returned to PROCEED: ended at {levels[-1]}"
+
+
+def test_decision_degraded_floor_never_proceed_with_hazard():
+    """Blind (no lane lock) + a hazard present must never read PROCEED."""
+    eng = _engine()
+    benign = FakeTrack(id=5, label="car", in_path=True, smoothed_distance_m=30.0,
+                       closing_speed_mps=0.0, ttc_s=None, risk="LOW", center=(640, 400))
+    d = None
+    for _ in range(4):                       # lane_result=None -> degraded/object-only
+        d = eng.process(None, [benign])
+    assert d.degraded, "expected degraded with lane input absent"
+    assert d.longitudinal_level >= 1, "degraded with a hazard present but still PROCEED"
+
+
+def test_decision_advisory_eases_never_brakes():
+    """A stop sign / light in-path eases to SLOW — it must never trigger a hard brake."""
+    eng = _engine()
+    sign = FakeTrack(id=6, label="stop sign", in_path=True, smoothed_distance_m=4.0,
+                     closing_speed_mps=0.0, ttc_s=None, risk="HIGH", center=(640, 300))
+    levels = [eng.process(FakeLane(1.0, 0), [sign]).longitudinal_level for _ in range(6)]
+    assert max(levels) <= 2, f"an advisory control triggered level {max(levels)} (>= BRAKE)"
+    assert levels[-1] == 2, f"advisory did not settle at SLOW: {levels}"
+
+
+def test_decision_lateral_inhibited_toward_hazard():
+    """When braking, a lane correction toward the hazard's side is suppressed to HOLD."""
+    eng = _engine()
+    hz = FakeTrack(id=8, label="car", in_path=True, smoothed_distance_m=7.0,
+                   closing_speed_mps=0.0, ttc_s=None, risk="HIGH", center=(560, 500))  # left of centre
+    lane = FakeLane(confidence=1.0, offset_px=60)   # offset>0 -> CORRECT_LEFT, toward the hazard
+    d = None
+    for _ in range(6):
+        d = eng.process(lane, [hz])
+    assert d.longitudinal_level == 3, f"expected BRAKE, got {d.longitudinal}"
+    assert d.lateral == "HOLD", f"lateral not inhibited toward hazard: {d.lateral}"
+
+
+def test_decision_vulnerable_brakes_earlier_than_vehicle():
+    """At an identical TTC, a pedestrian must brake earlier than a car (vulnerable margin)."""
+    def run(label):
+        eng = _engine()
+        hz = FakeTrack(id=1, label=label, in_path=True, smoothed_distance_m=15.0,
+                       closing_speed_mps=5.0, ttc_s=3.0, risk="LOW", center=(640, 460))
+        d = None
+        for _ in range(6):
+            d = eng.process(FakeLane(1.0, 0), [hz])
+        return d.longitudinal_level
+    ped, car = run("person"), run("car")
+    assert ped >= 3 > car, f"vulnerable margin missing: person={ped}, car={car}"
+
+
+# ---------------------------------------------------------------------------
+# tracker — occlusion survival
+# ---------------------------------------------------------------------------
+
+def test_tracker_survives_brief_occlusion():
+    """A confirmed track keeps its ID through an occlusion shorter than TRACK_MAX_AGE."""
+    from tracker import MultiObjectTracker
+    trk = MultiObjectTracker()
+    box, ident = (600, 400, 700, 520), None
+    for _ in range(cfg.TRACK_MIN_HITS + 1):
+        c = [t for t in trk.update([_det(*box)]) if t.confirmed]
+        if c:
+            ident = c[0].id
+    assert ident is not None, "track never confirmed"
+    for _ in range(cfg.TRACK_MAX_AGE - 1):    # occlude, but not long enough to drop it
+        trk.update([])
+    reappeared = [t for t in trk.update([_det(*box)]) if t.id == ident]
+    assert reappeared, f"track lost its ID through a {cfg.TRACK_MAX_AGE - 1}-frame occlusion"
+
+
+# ---------------------------------------------------------------------------
+# config — safety bounds
+# ---------------------------------------------------------------------------
+
+def test_config_safety_bounds():
+    # distance bands tighten toward the vehicle in the right order
+    assert cfg.DIST_EMERGENCY_M < cfg.RISK_DISTANCE_HIGH < cfg.RISK_DISTANCE_MEDIUM
+    # brake scalars are a valid, ordered fraction
+    assert 0.0 <= cfg.BRAKE_MIN <= cfg.BRAKE_MAX <= 1.0
+    # latches / holds are real (>=1 frame)
+    assert cfg.EMERGENCY_LATCH_FRAMES >= 1 and cfg.HOLD_FRAMES >= 1
+    # a degraded system must release its caution NO faster than a healthy one
+    assert cfg.HOLD_FRAMES_DEGRADED >= cfg.HOLD_FRAMES
+    # every safety margin is non-negative (a negative one would brake LATE)
+    assert cfg.VULNERABLE_TTC_MARGIN_S >= 0 and cfg.DEGRADED_TTC_MARGIN_S >= 0
+    assert cfg.MIN_CLOSING_MPS >= 0
+
+
+# ---------------------------------------------------------------------------
 # runner
 # ---------------------------------------------------------------------------
 
