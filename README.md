@@ -166,6 +166,7 @@ adas-vision/
 ├── train_bdd.py         ← Phase 12: fine-tune on real BDD100K night/weather data
 ├── train_signs.py       ← CPU trainer for the sign classifier (Module 11b, GTSRB)
 ├── export_onnx.py / export_openvino.py / export_yolo_openvino.py ← ONNX + OpenVINO IR exporters
+├── export_yolo_tflite.py ← Phase 14: YOLOv8n -> per-tensor INT8 TFLite (Axis ARTPEC-8 edge)
 ├── bench_speed.py / bench_openvino.py  ← per-backend speed benchmarks (--yolo covers YOLO)
 ├── main.py              ← CLI entry point: runs the whole pipeline together
 └── requirements.txt
@@ -258,6 +259,19 @@ python driver_monitor_demo.py
 ```
 
 > These layers exist to show the *shape* of a full ADAS in software. They do **not** make the system safe to drive with — a single camera, a best-effort CPU, simulated sensors, and no certification are exactly why it stays advisory. Re-read the safety notice above.
+
+## Edge deployment feasibility (Axis ARTPEC-8)
+
+A detection model doesn't have to run on a laptop — an Axis camera SoC (**ARTPEC-8**) can run YOLO on its **DLPU** via the `larod` runtime, which wants a **per-tensor INT8 TFLite** model. [`export_yolo_tflite.py`](export_yolo_tflite.py) produces exactly that:
+
+```bash
+pip install tensorflow onnx2tf tf_keras   # optional edge extras (not in requirements.txt)
+python export_yolo_tflite.py              # YOLOv8n -> per-tensor INT8 TFLite, dashcam-calibrated
+```
+
+What's **confirmed**: the conversion runs cross-platform (via `onnx2tf`, sidestepping Ultralytics' Linux-only TFLite gate) and yields the ARTPEC-8 artifact — `yolov8n_full_integer_quant.tflite`, **3.3 MB, ~3.9× smaller** than FP32, calibrated on real frames. The FP32 TFLite matches the PyTorch model **100%** on detections, so the graph translation is faithful.
+
+What's **not yet measured**, honestly: the INT8 *accuracy number*. Desktop TFLite CPU kernels can't execute the quantised graph (the reference sigmoid demands output scale `1/256`; XNNPACK won't delegate onnx2tf's transposes) — both are host-runtime limits that **don't apply to the DLPU**. Verify INT8 accuracy on Linux/Colab (`YOLO(tflite).val(...)`) or on the device itself. Prompted by a reader's suggestion on the project's LinkedIn — a genuine edge path, scoped honestly.
 
 ## Evaluation & recording
 
@@ -355,6 +369,7 @@ For the decision engine (Module 3), the settings that matter most:
 - [x] **Phase 11** — Speed up the bottlenecks the latency budget exposed: **YOLO on the Intel iGPU** (OpenVINO, 2.9× over torch-CPU, 95% detection parity), then the **lane detector at half-resolution** (per-pixel HSV/Canny/Hough, 96% agreement, ~1.9× — and freeing the CPU sped up YOLO too). Honest end-to-end **3.1 → ~14 fps**. Next: BDD100K night + weather data
 - [x] **Phase 12** — Adverse-condition robustness. (a) **Adopted**: a **rich synthetic augmentation suite** (`adverse_aug.py` — rain, snow, glare, low-light sensor noise on top of night/fog) drove an IDD retrain (`train_local.py --adverse`) that lifted the tough **night+fog+rain** IoU from **0.78 → 0.91** and beat the prior fine-tune on both clean and hard — now the default road model. (b) **Ready**: a **BDD100K pipeline** (`prepare_bdd_drivable.py` + `train_bdd.py`) that fine-tunes on **real** night/rain/snow driving data with a night/weather-weighted sampler and a real-adverse validation metric (needs the gated BDD download)
 - [x] **Phase 13** — Overnight hardening. Safety regression tests expanded **9 → 19** (emergency latch, gradual release, degraded floor, advisory-never-brakes, lateral-inhibited-toward-hazard, vulnerable-earlier-brake, occlusion survival, frame-guard). A **full-clip weakness sweep** (17,982 frames) confirmed the safety spine holds — **0 frames** proceed with a <15 m in-path hazard, low decision churn — and drove two fixes: **defensive frame-health guards** (malformed frames degrade, never crash) and **corridor mask cleanup** (open/close + connected-component filter — cuts drivable-mask fragmentation, e.g. 6→2 blobs on noisy frames, IoU held at 0.92)
+- [~] **Phase 14** (feasibility) — On-camera edge inference: YOLOv8n → **per-tensor INT8 TFLite** for the Axis **ARTPEC-8** DLPU (`export_yolo_tflite.py`). Conversion + format + graph fidelity confirmed (3.3 MB, ~3.9× smaller, FP32 graph 100% faithful); INT8 accuracy verification is an on-device / Linux step. Next: BDD100K real night/weather data
 
 ## Design principles
 

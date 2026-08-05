@@ -32,6 +32,12 @@ yolov8n_openvino_model/
 kernel.errors.txt
 *.blob
 
+# Edge (ARTPEC-8) TFLite artifacts — produced by export_yolo_tflite.py; large
+# binaries + build scratch, share via a Release, not the repo.
+*.tflite
+yolov8n_tflite/
+calib_data.npy
+
 # Python
 __pycache__/
 *.py[cod]
