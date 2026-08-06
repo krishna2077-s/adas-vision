@@ -12,8 +12,13 @@ Design — a deliberately small, dependency-free tracker (a stripped-down SORT):
 
     - Association: greedy IoU matching of this frame's detections to existing
       tracks (no Hungarian solver, no scipy — object counts are small).
-    - Motion: none. The last smoothed box is the prediction. At these frame
-      rates a constant-position assumption associates reliably and can't drift.
+    - Motion: an optional constant-velocity model (TRACK_PREDICT_ON_COAST).
+      Each track carries a per-corner pixel velocity; a coasting (unmatched)
+      track is associated against its PREDICTED box, and a known closing hazard
+      keeps a live, bounded distance/TTC between detections instead of freezing.
+      This is what lets perception run below the video frame rate (async / high
+      fps) without a tracked threat going stale. Disable it to fall back to the
+      original constant-position behaviour.
     - Per-track kinematics: EMA-smoothed monocular distance (with the same
       spike rejection as before, but now per-object so a jump is real object
       motion, not an identity swap), a derived closing speed, and a real-seconds
@@ -74,9 +79,27 @@ class Track:
     time_since_update: int = 0     # frames since last matched (0 = matched this frame)
     confirmed:         bool = False
 
+    # Constant-velocity motion model — per-corner pixel velocity (px/s), zero
+    # until the track has been matched a couple of times. Enables predicted-box
+    # association after a dropout and honest coasting between detections.
+    vx1: float = 0.0
+    vy1: float = 0.0
+    vx2: float = 0.0
+    vy2: float = 0.0
+    coast_predicted:   int = 0     # consecutive coast frames whose TTC we've extrapolated
+
     @property
     def bbox(self) -> Tuple[int, int, int, int]:
         return (int(self.x1), int(self.y1), int(self.x2), int(self.y2))
+
+    def _vel_ready(self) -> bool:
+        """Velocity is trustworthy for prediction only after a few matches."""
+        return self.hits >= cfg.TRACK_VEL_MIN_HITS
+
+    def predict_box(self, dt: float) -> Tuple[int, int, int, int]:
+        """Box extrapolated one step forward by the current per-corner velocity."""
+        return (int(self.x1 + self.vx1 * dt), int(self.y1 + self.vy1 * dt),
+                int(self.x2 + self.vx2 * dt), int(self.y2 + self.vy2 * dt))
 
     @property
     def center(self) -> Tuple[int, int]:
@@ -88,12 +111,21 @@ class Track:
 
     # -- internal updates ------------------------------------------------
 
-    def _update_box(self, det) -> None:
+    def _update_box(self, det, dt: float) -> None:
         a = cfg.TRACK_BBOX_EMA
-        self.x1 = a * det.x1 + (1 - a) * self.x1
-        self.y1 = a * det.y1 + (1 - a) * self.y1
-        self.x2 = a * det.x2 + (1 - a) * self.x2
-        self.y2 = a * det.y2 + (1 - a) * self.y2
+        nx1 = a * det.x1 + (1 - a) * self.x1
+        ny1 = a * det.y1 + (1 - a) * self.y1
+        nx2 = a * det.x2 + (1 - a) * self.x2
+        ny2 = a * det.y2 + (1 - a) * self.y2
+        # Per-corner velocity (px/s), EMA-smoothed. Derived from the smoothed-box
+        # displacement, which at steady state tracks the true per-frame motion.
+        if dt > 1e-6:
+            b = cfg.TRACK_VEL_EMA
+            self.vx1 = b * (nx1 - self.x1) / dt + (1 - b) * self.vx1
+            self.vy1 = b * (ny1 - self.y1) / dt + (1 - b) * self.vy1
+            self.vx2 = b * (nx2 - self.x2) / dt + (1 - b) * self.vx2
+            self.vy2 = b * (ny2 - self.y2) / dt + (1 - b) * self.vy2
+        self.x1, self.y1, self.x2, self.y2 = nx1, ny1, nx2, ny2
 
     def _update_kinematics(self, det, dt: float) -> None:
         """EMA the per-object distance, derive closing speed + TTC."""
@@ -130,10 +162,38 @@ class Track:
             if self.closing_speed_mps > cfg.MIN_CLOSING_MPS else None
         )
 
-    def _coast(self) -> None:
-        """No detection this frame: hold position, don't fabricate closing/TTC."""
-        self.closing_speed_mps = 0.0
-        self.ttc_s = None
+    def _coast(self, dt: float) -> None:
+        """No detection this frame.
+
+        With the motion model on, advance the box by its velocity and — for a
+        track that was already CLOSING — keep distance/TTC live for a bounded
+        number of coast frames (then freeze). Erring toward keeping a lost-but-
+        closing threat 'live' between detections is the safe direction and is
+        what makes below-frame-rate perception safe. Never fabricates closing
+        for a track that wasn't already closing. With the model off, this is the
+        original behaviour: hold position, drop closing/TTC.
+        """
+        predict = cfg.TRACK_PREDICT_ON_COAST and self._vel_ready()
+        if predict:
+            self.x1 += self.vx1 * dt
+            self.y1 += self.vy1 * dt
+            self.x2 += self.vx2 * dt
+            self.y2 += self.vy2 * dt
+
+        if (cfg.TRACK_PREDICT_ON_COAST
+                and self.coast_predicted < cfg.TRACK_COAST_PREDICT_MAX
+                and self.smoothed_distance_m is not None
+                and self.closing_speed_mps > cfg.MIN_CLOSING_MPS):
+            # extrapolate the approach; closing speed is held (not re-derived)
+            self.smoothed_distance_m = max(
+                0.0, self.smoothed_distance_m - self.closing_speed_mps * dt)
+            self.ttc_s = (self.smoothed_distance_m / self.closing_speed_mps
+                          if self.closing_speed_mps > cfg.MIN_CLOSING_MPS else 0.0)
+            self.coast_predicted += 1
+        else:
+            # not closing, or the extrapolation budget is spent -> stop trusting it
+            self.closing_speed_mps = 0.0
+            self.ttc_s = None
 
 
 # ---------------------------------------------------------------------------
@@ -183,10 +243,18 @@ class MultiObjectTracker:
         detections = detections or []
 
         # ── Greedy IoU association (highest overlap first) ────────────
+        # A track that missed the previous frame is matched against its PREDICTED
+        # box (constant-velocity) so a fast object re-acquires its ID instead of
+        # spawning a new track; a continuously-tracked object uses its measured box.
         pairs = []
         for ti, trk in enumerate(self.tracks):
+            if (trk.time_since_update > 0 and cfg.TRACK_PREDICT_ON_COAST
+                    and trk._vel_ready()):
+                ref = trk.predict_box(dt)
+            else:
+                ref = trk.bbox
             for di, det in enumerate(detections):
-                iou = _iou(trk.bbox, (det.x1, det.y1, det.x2, det.y2))
+                iou = _iou(ref, (det.x1, det.y1, det.x2, det.y2))
                 if iou >= cfg.TRACK_IOU_MIN:
                     pairs.append((iou, ti, di))
         pairs.sort(reverse=True)
@@ -202,7 +270,7 @@ class MultiObjectTracker:
         # ── Update matched tracks ─────────────────────────────────────
         for ti, di in matches:
             trk, det = self.tracks[ti], detections[di]
-            trk._update_box(det)
+            trk._update_box(det, dt)
             trk._update_kinematics(det, dt)
             trk.label = det.label
             trk.confidence = det.confidence
@@ -210,6 +278,7 @@ class MultiObjectTracker:
             trk.in_path = det.in_path
             trk.hits += 1
             trk.time_since_update = 0
+            trk.coast_predicted = 0            # a real detection resets the extrapolation budget
             if not trk.confirmed and trk.hits >= cfg.TRACK_MIN_HITS:
                 trk.confirmed = True
 
@@ -217,7 +286,7 @@ class MultiObjectTracker:
         for ti, trk in enumerate(self.tracks):
             if ti not in matched_t:
                 trk.time_since_update += 1
-                trk._coast()
+                trk._coast(dt)
         self.tracks = [t for t in self.tracks if t.time_since_update <= cfg.TRACK_MAX_AGE]
 
         # ── Spawn new tracks for unmatched detections ─────────────────

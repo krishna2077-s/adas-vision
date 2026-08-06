@@ -412,6 +412,19 @@ TRACK_MAX_AGE  = 5      # frames a track may coast (unmatched) before it is drop
 TRACK_MIN_HITS = 3      # detections before a track is 'confirmed' — rejects 1-frame ghosts
 TRACK_BBOX_EMA = 0.5    # EMA weight smoothing each track's bounding box
 
+# --- Constant-velocity motion model -----------------------------------------
+# Lets perception run below the video frame rate (async / high-fps) without a
+# tracked hazard going stale: a coasting track is associated against its
+# PREDICTED box, and a KNOWN closing hazard keeps a live (bounded) distance/TTC
+# between detections instead of freezing. Set TRACK_PREDICT_ON_COAST = False for
+# the original constant-position behaviour.
+TRACK_PREDICT_ON_COAST  = True
+TRACK_VEL_EMA           = 0.4   # EMA weight on each track's per-corner pixel velocity
+TRACK_VEL_MIN_HITS      = 2     # matched updates before the velocity is trusted for prediction
+TRACK_COAST_PREDICT_MAX = 5     # max consecutive coast frames to extrapolate distance/TTC
+                                # before freezing (<= TRACK_MAX_AGE; bounds a lost track's
+                                # influence on the decision — safe, never indefinite)
+
 COLOR_TRACK_ID = (255, 255, 255)   # track-ID tag colour (BGR)
 
 # --- Module toggle ----------------------------------------------------------

@@ -392,6 +392,111 @@ def test_tracker_survives_brief_occlusion():
 
 
 # ---------------------------------------------------------------------------
+# tracker — constant-velocity motion model (real-time / async foundation)
+# ---------------------------------------------------------------------------
+
+def _track_by_id(tracks, ident):
+    return next((t for t in tracks if t.id == ident), None)
+
+
+def test_tracker_coast_advances_box_by_velocity():
+    """A moving track, when it coasts (no detection), advances its box in the
+    direction of travel instead of freezing — the basis for below-frame-rate use."""
+    from tracker import MultiObjectTracker
+    trk = MultiObjectTracker()
+    ident = None
+    for k in range(cfg.TRACK_MIN_HITS + 3):              # establish a rightward velocity
+        x = 200 + k * 20
+        tr = trk.update([_det(x, 400, x + 90, 520)])
+        c = [t for t in tr if t.confirmed]
+        if c:
+            ident = c[0].id
+    assert ident is not None, "track never confirmed"
+    before = _track_by_id(trk.update([]), ident)         # first coast frame
+    x_before = before.center[0]
+    after = _track_by_id(trk.update([]), ident)          # second coast frame
+    assert after is not None, "track dropped too early while coasting"
+    assert after.center[0] > x_before, (
+        f"coasted box did not advance with velocity ({after.center[0]} !> {x_before})")
+
+
+def test_tracker_coast_keeps_closing_ttc_live_then_bounds_it():
+    """A track that was CLOSING keeps a live, decreasing-distance TTC across a few
+    coast frames (so a lost threat doesn't go stale), then freezes once the
+    extrapolation budget is spent — never indefinitely."""
+    from tracker import MultiObjectTracker
+    saved = cfg.TRACK_COAST_PREDICT_MAX
+    cfg.TRACK_COAST_PREDICT_MAX = 2                      # < TRACK_MAX_AGE so we can see the freeze
+    try:
+        trk = MultiObjectTracker()
+        ident = None
+        for k in range(cfg.TRACK_MIN_HITS + 4):         # establish approach: distance falls
+            d = _det(600, 400, 700, 520)
+            d.distance_m = 30.0 - k * 1.0
+            c = [t for t in trk.update([d]) if t.confirmed]
+            if c:
+                ident = c[0].id
+        live = _track_by_id(trk.update([]), ident)      # coast 1 (within budget)
+        assert live.ttc_s is not None and live.closing_speed_mps > 0, "closing TTC not carried on coast"
+        d_after1 = live.smoothed_distance_m
+        trk.update([])                                   # coast 2 (budget now spent)
+        frozen = _track_by_id(trk.update([]), ident)     # coast 3 (beyond budget)
+        assert frozen is not None, "track dropped before we could observe the freeze"
+        assert frozen.ttc_s is None and frozen.closing_speed_mps == 0.0, (
+            "extrapolation not bounded — TTC still live past the budget")
+        assert d_after1 <= 30.0, "distance did not extrapolate the approach on coast"
+    finally:
+        cfg.TRACK_COAST_PREDICT_MAX = saved
+
+
+def test_tracker_predict_off_restores_constant_position():
+    """With the motion model disabled, coasting is the original behaviour:
+    the box is held and closing/TTC are dropped (zero-regression guard)."""
+    from tracker import MultiObjectTracker
+    saved = cfg.TRACK_PREDICT_ON_COAST
+    cfg.TRACK_PREDICT_ON_COAST = False
+    try:
+        trk = MultiObjectTracker()
+        ident = None
+        for k in range(cfg.TRACK_MIN_HITS + 3):
+            x = 200 + k * 20
+            c = [t for t in trk.update([_det(x, 400, x + 90, 520)]) if t.confirmed]
+            if c:
+                ident = c[0].id
+        held = _track_by_id(trk.update([]), ident)
+        x_held = held.center[0]
+        again = _track_by_id(trk.update([]), ident)
+        assert again.center[0] == x_held, "box moved while the motion model was OFF"
+        assert again.ttc_s is None, "TTC fabricated while the motion model was OFF"
+    finally:
+        cfg.TRACK_PREDICT_ON_COAST = saved
+
+
+def test_tracker_predicted_box_leads_on_coast():
+    """A coasting track's association input (its predicted box) leads its last
+    box in the direction of motion — the mechanism that lets a moving object
+    re-acquire its ID after a dropped detection instead of matching a stale box.
+    (Tested directly rather than via emergent ID behaviour, which is confounded
+    by bbox-EMA lag orphaning fast objects — a separate tracker limitation.)"""
+    from tracker import MultiObjectTracker
+    trk = MultiObjectTracker()
+    ident = None
+    for k in range(cfg.TRACK_MIN_HITS + 3):             # steady rightward motion
+        x = 200 + k * 10
+        c = [t for t in trk.update([_det(x, 400, x + 100, 520)]) if t.confirmed]
+        if c:
+            ident = c[0].id
+    assert ident is not None, "track never confirmed"
+    t = _track_by_id(trk.update([]), ident)             # one coast frame
+    assert t is not None
+    assert t.vx1 > 0 and t.vx2 > 0, "no rightward velocity was learned"
+    pred = t.predict_box(0.033)
+    assert pred[0] > t.bbox[0] and pred[2] > t.bbox[2], (
+        f"predicted box did not lead the current box in the motion direction: "
+        f"pred={pred} bbox={t.bbox}")
+
+
+# ---------------------------------------------------------------------------
 # config — safety bounds
 # ---------------------------------------------------------------------------
 
