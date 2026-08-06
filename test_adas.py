@@ -287,6 +287,50 @@ def test_decision_degraded_floor_never_proceed_with_hazard():
     assert d.longitudinal_level >= 1, "degraded with a hazard present but still PROCEED"
 
 
+def test_decision_stale_detection_degrades():
+    """Real-time fail-safe: a detection older than the latency budget marks the
+    engine degraded (so the degraded floor keeps it cautious near a hazard on
+    stale perception); a fresh detection does not."""
+    car = FakeTrack(id=5, label="car", in_path=True, smoothed_distance_m=30.0,
+                    closing_speed_mps=0.0, ttc_s=None, risk="LOW", center=(640, 400))
+    fresh = _engine()
+    df = None
+    for _ in range(4):
+        df = fresh.process(FakeLane(1.0, 0), [car], detection_age_s=0.0)
+    assert not df.degraded, f"fresh detection wrongly degraded: {df.reason}"
+    stale = _engine()
+    ds = None
+    for _ in range(4):
+        ds = stale.process(FakeLane(1.0, 0), [car],
+                           detection_age_s=cfg.DETECTION_LATENCY_BUDGET_S + 0.05)
+    assert ds.degraded, "detection past the latency budget did not degrade"
+    assert "stale" in ds.reason.lower(), f"degrade cause was not stale-detection: {ds.reason}"
+
+
+def test_decision_reduced_cadence_floors_stopped_vehicle():
+    """The reduced-cadence floor's unique job: on a FRESH frame (not degraded)
+    while in sticky reduced-cadence mode, a confirmed in-path vehicle within the
+    spine distance floors to CAUTION even when it is NOT closing (stale kinematics
+    the engine's rules under-rate). This is the cadence audit's bus-at-14.6m gap,
+    which lands on a fresh frame the staleness-degrade alone can't catch."""
+    eng = _engine()
+    d = None
+    for _ in range(4):                                   # open road -> PROCEED
+        d = eng.process(FakeLane(1.0, 0), [], detection_age_s=0.0)
+    assert d.longitudinal_level == 0, "setup expected PROCEED (clear road)"
+    # a stale detection on a CLEAR road latches reduced-cadence mode without any
+    # floor firing (nothing near) and without leaving committed raised.
+    eng.process(FakeLane(1.0, 0), [], detection_age_s=cfg.DETECTION_LATENCY_BUDGET_S + 0.05)
+    # FRESH frame: a bus is now close in-path, not closing, LOW risk. Fresh ->
+    # NOT degraded, so ONLY the sticky reduced-cadence floor can catch it.
+    near = FakeTrack(id=2, label="bus", in_path=True, smoothed_distance_m=14.6,
+                     closing_speed_mps=0.0, ttc_s=None, risk="LOW", center=(640, 400))
+    d2 = eng.process(FakeLane(1.0, 0), [near], detection_age_s=0.0)
+    assert not d2.degraded, f"fresh frame unexpectedly degraded: {d2.reason}"
+    assert d2.longitudinal_level >= 1 and "reduced cadence" in d2.reason.lower(), (
+        f"reduced-cadence floor missed a bus 14.6m in-path on a fresh frame: {d2.reason}")
+
+
 def test_decision_advisory_eases_never_brakes():
     """A stop sign / light in-path eases to SLOW — it must never trigger a hard brake."""
     eng = _engine()

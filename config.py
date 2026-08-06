@@ -370,6 +370,24 @@ DET_CONF_MIN           = 0.50  # nearest-in-path confidence below this -> degrad
                                # already filtered everything below it and this never trips.
 DEGRADED_DIST_MARGIN_M = 5.0   # widen the MEDIUM-in-path SLOW band when degraded
 DEGRADED_TTC_MARGIN_S  = 1.0   # react earlier (add to every TTC threshold) when degraded
+# Real-time detection-staleness fail-safe. When the freshest object detection is
+# older than this, perception is behind real time (async YOLO mid-inference, an
+# iGPU stall, a dropped frame) -> the engine degrades, so the degraded floor
+# keeps it cautious near a hazard instead of confidently PROCEEDing on stale
+# perception. Sized by the full-clip cadence audit: detection every 2 frames of
+# the 60 fps clip (~17 ms between detections) keeps the spine clean; every 3+
+# (~33 ms+) does not — so the budget sits between them.
+DETECTION_LATENCY_BUDGET_S = 0.025
+# Reduced-cadence proximity floor. When detection has been running slower than the
+# budget (async YOLO behind, a stall), a coasted track's closing speed is stale,
+# so the engine's kinematic hazard assessment under-rates a stopped/slow vehicle
+# dead ahead (the cadence audit's one spine gap: a bus at ~14.6 m read PROCEED).
+# In that mode the engine falls back to RAW proximity: it will not PROCEED past
+# any confirmed in-path object within this distance, regardless of closing/risk.
+# The mode is held STALE_HOLD frames after the last stale detection so it also
+# covers the next fresh frame (the violation frame was a fresh one).
+DETECTION_PROXIMITY_FLOOR_M = 15.0
+DETECTION_STALE_HOLD_FRAMES = 8
 
 # --- Class-aware reaction ---------------------------------------------------
 # Vulnerable road users earn extra reaction margin; advisory signs are never

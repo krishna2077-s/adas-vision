@@ -119,6 +119,7 @@ class DecisionEngine:
         self.raw_history: "deque[int]" = deque(maxlen=cfg.EVIDENCE_WINDOW)
         self.down_counter = 0
         self.emergency_dwell = 0
+        self._stale_hold = 0            # frames left in reduced-cadence mode (detection behind)
 
         # ── Timing / bookkeeping ──────────────────────────────────────
         self._prev_tick = cv2.getTickCount()
@@ -133,22 +134,37 @@ class DecisionEngine:
         self.raw_history.clear()
         self.down_counter = 0
         self.emergency_dwell = 0
+        self._stale_hold = 0
         self._last_decision = None
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    def process(self, lane_result, tracks) -> DrivingDecision:
+    def process(self, lane_result, tracks, detection_age_s: float = 0.0) -> DrivingDecision:
         """
         Fuse one frame of lane result + object tracks into a driving decision.
 
         Either argument may be None (its module was disabled or unavailable);
         the engine degrades gracefully. If BOTH are None it holds the previous
         decision rather than inventing one.
+
+        detection_age_s: seconds since the freshest object detection. Under the
+        async detector the loop runs faster than YOLO, so this is > 0 between
+        detections; when it exceeds DETECTION_LATENCY_BUDGET_S the engine treats
+        perception as stale and degrades (the real-time fail-safe). Defaults to 0
+        for the synchronous pipeline, where detection is per-frame.
         """
         self.frame_index += 1
         raw_dt = self._measure_dt()             # only used for the fps trust gate
+
+        # Reduced-cadence mode: latch when a detection arrives later than the safe
+        # budget, and hold it a few frames so the immediately-following fresh frame
+        # (whose coasted tracks still carry stale kinematics) is covered too.
+        if detection_age_s > cfg.DETECTION_LATENCY_BUDGET_S:
+            self._stale_hold = cfg.DETECTION_STALE_HOLD_FRAMES
+        elif self._stale_hold > 0:
+            self._stale_hold -= 1
 
         # ── Validity: nothing to reason about ─────────────────────────
         if lane_result is None and tracks is None:
@@ -164,7 +180,8 @@ class DecisionEngine:
         hazard_side = self._hazard_side(hazard)
 
         # ── Trust / degraded flags ────────────────────────────────────
-        degraded, degraded_cause = self._assess_trust(lane_result, tracks, hazard, fps)
+        degraded, degraded_cause = self._assess_trust(
+            lane_result, tracks, hazard, fps, detection_age_s)
 
         # ── Policy table -> raw longitudinal level ────────────────────
         raw_level, rule_id, reason_core = self._evaluate_rules(
@@ -204,6 +221,25 @@ class DecisionEngine:
                 committed = CAUTION
                 floored = True
                 floor_reason = f"{vru.label} #{vru.id} {vru.smoothed_distance_m:.1f}m in-path"
+
+        # ── Reduced-cadence proximity floor: when detection is running below the
+        #    safe rate, a coasted track's closing speed is stale and the kinematic
+        #    hazard rules under-rate a stopped/slow vehicle dead ahead. Fall back
+        #    to RAW proximity — never PROCEED past any confirmed in-path object
+        #    within the spine distance, regardless of closing/risk. Only active in
+        #    reduced-cadence mode, so it costs nothing at a healthy detection rate.
+        if self._stale_hold > 0 and committed < CAUTION:
+            obj = next(
+                (t for t in confirmed
+                 if getattr(t, "in_path", False) and t.smoothed_distance_m is not None
+                 and t.smoothed_distance_m <= cfg.DETECTION_PROXIMITY_FLOOR_M),
+                None,
+            )
+            if obj is not None:
+                committed = CAUTION
+                floored = True
+                floor_reason = (f"reduced cadence -- {obj.label} #{obj.id} "
+                                f"{obj.smoothed_distance_m:.1f}m in-path")
 
         self.committed_level = committed
         self.emergency_dwell = self.emergency_dwell + 1 if committed == EMERGENCY_STOP else 0
@@ -315,7 +351,8 @@ class DecisionEngine:
     # Trust / degraded assessment
     # ------------------------------------------------------------------
 
-    def _assess_trust(self, lane_result, tracks, hazard, fps) -> Tuple[bool, str]:
+    def _assess_trust(self, lane_result, tracks, hazard, fps,
+                      detection_age_s: float = 0.0) -> Tuple[bool, str]:
         """Returns (degraded, first_cause_string)."""
         if lane_result is None:
             return True, "object-only mode"
@@ -325,6 +362,8 @@ class DecisionEngine:
             return True, "lane-only mode"
         if fps < cfg.MIN_FPS:
             return True, f"low fps ({fps:.1f})"
+        if detection_age_s > cfg.DETECTION_LATENCY_BUDGET_S:
+            return True, f"stale detection ({detection_age_s * 1000:.0f}ms)"
         if hazard is not None and hazard.confidence < cfg.DET_CONF_MIN:
             return True, "low-confidence detection"
         return False, ""
