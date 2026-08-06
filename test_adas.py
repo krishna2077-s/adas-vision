@@ -324,6 +324,53 @@ def test_decision_vulnerable_brakes_earlier_than_vehicle():
     assert ped >= 3 > car, f"vulnerable margin missing: person={ped}, car={car}"
 
 
+def test_decision_vulnerable_in_path_never_leaks_proceed():
+    """A confirmed vulnerable road user close in-path must floor to >=CAUTION on the
+    VERY FIRST frame — the escalation ratchet's confirmation delay must not leak a
+    single frame of PROCEED past a nearby pedestrian/rider.
+
+    Regression: the faithful full-clip sweep (mirroring main.py's real decision
+    path, road-fallback wired in) caught exactly one such frame — a motorcyclist
+    at ~11 m crossing into the corridor showed PROCEED for one frame before the
+    ratchet confirmed SLOW. The vulnerable-proximity floor closes that window.
+    """
+    eng = _engine()
+    d = None
+    for _ in range(4):                        # establish a clean PROCEED baseline
+        d = eng.process(FakeLane(1.0, 0), [])
+    assert d.longitudinal_level == 0, "expected a clean PROCEED baseline"
+    # A pedestrian appears close in-path, NOT closing (ttc None) — the exact case.
+    vru = FakeTrack(id=13, label="person", in_path=True, smoothed_distance_m=11.0,
+                    closing_speed_mps=0.0, ttc_s=None, risk="MEDIUM", center=(640, 500))
+    d = eng.process(FakeLane(1.0, 0), [vru])
+    assert not d.degraded, "scene is not degraded — the non-degraded floor must fire"
+    assert d.longitudinal_level >= 1, (
+        f"leaked PROCEED with a person 11 m in-path (level {d.longitudinal_level})")
+
+
+def test_decision_vulnerable_floor_is_scoped():
+    """The vulnerable floor must NOT fire for an off-path or a far VRU — no spurious
+    CAUTION on a roadside bystander or a distant pedestrian."""
+    # (a) off-path VRU, close: no floor
+    eng = _engine()
+    d = None
+    for _ in range(4):
+        d = eng.process(FakeLane(1.0, 0), [])
+    off = FakeTrack(id=1, label="person", in_path=False, smoothed_distance_m=8.0,
+                    closing_speed_mps=0.0, ttc_s=None, risk="LOW", center=(200, 500))
+    d = eng.process(FakeLane(1.0, 0), [off])
+    assert d.longitudinal_level == 0, "off-path VRU wrongly floored to CAUTION"
+    # (b) in-path VRU beyond the floor distance: no floor
+    eng = _engine()
+    for _ in range(4):
+        d = eng.process(FakeLane(1.0, 0), [])
+    far = FakeTrack(id=2, label="person", in_path=True,
+                    smoothed_distance_m=cfg.VULNERABLE_FLOOR_DIST_M + 25.0,
+                    closing_speed_mps=0.0, ttc_s=None, risk="LOW", center=(640, 380))
+    d = eng.process(FakeLane(1.0, 0), [far])
+    assert d.longitudinal_level == 0, "far in-path VRU wrongly floored to CAUTION"
+
+
 # ---------------------------------------------------------------------------
 # tracker — occlusion survival
 # ---------------------------------------------------------------------------

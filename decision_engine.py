@@ -176,11 +176,35 @@ class DecisionEngine:
 
         # ── Degraded floor: never claim PROCEED while blind + hazard ──
         floored = False
+        floor_reason = ""
         if degraded and committed < CAUTION and (
             hazard is not None or highest_risk in ("MEDIUM", "HIGH")
         ):
             committed = CAUTION
             floored = True
+            floor_reason = "inputs untrusted with a hazard nearby"
+
+        # ── Vulnerable-proximity floor: never claim PROCEED while a confirmed
+        #    vulnerable road user is in the ego path within close range. The
+        #    ratchet takes a frame or two to confirm a newly-entered hazard
+        #    (e.g. a pedestrian/rider crossing into the corridor); for a close
+        #    VRU even one frame of PROCEED is unacceptable, so floor it here.
+        #    One-directional (only ever raises caution), independent of the
+        #    degraded flag, and gated on confirmed + in_path so it can't fire on
+        #    a roadside bystander. Mirrors the spine audit invariant exactly.
+        if committed < CAUTION:
+            vru = next(
+                (t for t in confirmed
+                 if t.label in cfg.VULNERABLE_CLASSES and getattr(t, "in_path", False)
+                 and t.smoothed_distance_m is not None
+                 and t.smoothed_distance_m <= cfg.VULNERABLE_FLOOR_DIST_M),
+                None,
+            )
+            if vru is not None:
+                committed = CAUTION
+                floored = True
+                floor_reason = f"{vru.label} #{vru.id} {vru.smoothed_distance_m:.1f}m in-path"
+
         self.committed_level = committed
         self.emergency_dwell = self.emergency_dwell + 1 if committed == EMERGENCY_STOP else 0
 
@@ -195,7 +219,7 @@ class DecisionEngine:
         core_text = reason_core.split("] ", 1)[-1]
         if floored:
             rid = "FLOOR"
-            reason = "[FLOOR] CAUTION: easing off -- inputs untrusted with a hazard nearby"
+            reason = f"[FLOOR] CAUTION: easing off -- {floor_reason}"
         elif committed == raw_level:
             rid = rule_id
             reason = reason_core

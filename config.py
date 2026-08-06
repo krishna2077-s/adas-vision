@@ -376,6 +376,11 @@ DEGRADED_TTC_MARGIN_S  = 1.0   # react earlier (add to every TTC threshold) when
 # braked on hard (Module 2 does not report a light's colour, so we only ease).
 VULNERABLE_CLASSES      = {"person", "bicycle", "motorcycle", "cow", "dog", "cat"}
 VULNERABLE_TTC_MARGIN_S = 0.8
+# Never output PROCEED while a confirmed vulnerable road user is in the ego path
+# within this range — the escalation ratchet needs a frame or two to confirm a
+# newly-entered hazard, and for a close VRU even one frame of PROCEED is
+# unacceptable. Enforced as a one-directional floor in the decision engine.
+VULNERABLE_FLOOR_DIST_M = 15.0
 ADVISORY_CLASSES        = {"traffic light", "stop sign"}
 
 # --- Brake / throttle command scalars (0.0 - 1.0) ---------------------------
