@@ -112,7 +112,25 @@ class ObjectDetector:
         backend_cfg = getattr(cfg, "YOLO_BACKEND", "torch").lower()
         model_file = cfg.YOLO_MODEL
         self._device = None
-        if backend_cfg == "openvino":
+
+        # CUDA-first (Jetson / NVIDIA GPU): a real GPU runs both nets concurrently,
+        # so prefer it over the iGPU OpenVINO path. Uses the .pt on the GPU (a
+        # prebuilt TensorRT '.engine' at YOLO_TRT_MODEL is used instead if present).
+        # No-op without CUDA -> the OpenVINO/CPU paths below run unchanged.
+        if getattr(cfg, "PREFER_CUDA", True):
+            try:
+                import torch as _torch
+                if _torch.cuda.is_available():
+                    trt = getattr(cfg, "YOLO_TRT_MODEL", "")
+                    model_file = trt if (trt and os.path.exists(trt)) else cfg.YOLO_MODEL
+                    self._device = "cuda"
+                    backend_cfg = "cuda"
+            except Exception:
+                pass
+
+        if backend_cfg == "cuda":
+            pass                                  # model_file + self._device already set above
+        elif backend_cfg == "openvino":
             ov_dir = getattr(cfg, "YOLO_OPENVINO_MODEL", "yolov8n_openvino_model")
             if os.path.isdir(ov_dir):
                 model_file = ov_dir
@@ -128,7 +146,9 @@ class ObjectDetector:
                 logger.info(f"YOLO ONNX '{onnx_path}' not found — using PyTorch model "
                             f"'{cfg.YOLO_MODEL}' (run export_yolo_onnx.py to enable the fast path).")
 
-        if os.path.isdir(model_file):
+        if self._device == "cuda":
+            self.backend = "cuda"
+        elif os.path.isdir(model_file):
             self.backend = "openvino"
         elif model_file.endswith(".onnx"):
             self.backend = "onnx"

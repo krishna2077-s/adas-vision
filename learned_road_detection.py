@@ -79,6 +79,7 @@ class LearnedRoadDetector:
         self._ov_out = None
         self.ov_device = None                     # actual device OpenVINO placed us on
         self.backend = "torch"
+        self._torch_device = "cpu"                 # "cuda" when a GPU is present (dual-net deploy)
         self.available = False
 
         # Frame-skip state: run the CNN every Nth frame, reuse the mask between.
@@ -112,6 +113,16 @@ class LearnedRoadDetector:
         """Loads the requested backend, degrading gracefully:
         openvino → onnx → torch → unavailable. A missing runtime or model file at
         any tier silently drops to the next, so a clean checkout still runs."""
+        # CUDA-first (Jetson / NVIDIA GPU): run the torch model ON the GPU, alongside
+        # YOLO, instead of the Intel-only OpenVINO path. No-op without CUDA.
+        if getattr(cfg, "PREFER_CUDA", True):
+            try:
+                import torch as _t
+                if _t.cuda.is_available():
+                    self._load_torch()
+                    return
+            except Exception:
+                pass
         backend = getattr(cfg, "LEARNED_BACKEND", "torch").lower()
         if backend == "openvino" and self._load_openvino():
             return
@@ -216,11 +227,19 @@ class LearnedRoadDetector:
             if cfg.LEARNED_ARCH.lower() == "deeplabv3" and getattr(model, "aux_classifier", None) is not None:
                 model.aux_classifier = None
             model.eval()
+            # CUDA when present (dual-net GPU deploy); otherwise CPU (this laptop).
+            if getattr(cfg, "PREFER_CUDA", True):
+                try:
+                    if torch.cuda.is_available():
+                        model = model.to("cuda")
+                        self._torch_device = "cuda"
+                except Exception:
+                    self._torch_device = "cpu"
             self.model = model
             self.backend = "torch"
             self.available = True
             logger.info(
-                f"LearnedRoadDetector ready (PyTorch) ({self.w}x{self.h}) — arch '{cfg.LEARNED_ARCH}', "
+                f"LearnedRoadDetector ready (PyTorch on {self._torch_device}) ({self.w}x{self.h}) — arch '{cfg.LEARNED_ARCH}', "
                 f"weights '{self.model_path}', {cfg.LEARNED_INPUT_W}x{cfg.LEARNED_INPUT_H} input, "
                 f"{torch.get_num_threads()} threads, infer every {cfg.LEARNED_INFER_EVERY} frame(s)"
             )
@@ -331,8 +350,8 @@ class LearnedRoadDetector:
             pred = out.argmax(1).squeeze(0).astype(np.uint8)
         else:
             with torch.no_grad():
-                out = self.model(torch.from_numpy(x))["out"]
-            pred = out.argmax(1).squeeze(0).numpy().astype(np.uint8)
+                out = self.model(torch.from_numpy(x).to(self._torch_device))["out"]
+            pred = out.argmax(1).squeeze(0).to("cpu").numpy().astype(np.uint8)
 
         mask = cv2.resize(pred, (self.w, self.h), interpolation=cv2.INTER_NEAREST) * 255
         return mask

@@ -250,6 +250,8 @@ YOLO_BACKEND    = "openvino"      # "openvino" (Intel iGPU — FASTEST here) | "
 YOLO_ONNX_MODEL = "yolov8n.onnx"  # optional; produced by export_yolo_onnx.py
 YOLO_OPENVINO_MODEL = "yolov8n_openvino_model"  # IR dir from export_yolo_openvino.py
 YOLO_OV_DEVICE  = "intel:gpu"     # ultralytics OpenVINO device: "intel:gpu" | "intel:cpu"
+YOLO_TRT_MODEL  = ""              # optional TensorRT '.engine' for CUDA deploy (see DEPLOYMENT.md);
+                                  # when PREFER_CUDA and CUDA is present, used instead of the .pt
 # Object detection runs EVERY frame — a hazard can appear between any two frames,
 # so we never frame-skip it (that's why only the road model, which barely moves
 # frame-to-frame, uses LEARNED_INFER_EVERY).
@@ -444,6 +446,14 @@ TRACK_COAST_PREDICT_MAX = 5     # max consecutive coast frames to extrapolate di
                                 # influence on the decision — safe, never indefinite)
 
 COLOR_TRACK_ID = (255, 255, 255)   # track-ID tag colour (BGR)
+
+# --- Hardware / device selection --------------------------------------------
+# CUDA-first: on a real GPU (NVIDIA Jetson / discrete card) BOTH neural nets —
+# YOLO and the learned road model — run concurrently without the single-iGPU
+# contention that limits this laptop, so prefer CUDA when it is present. Purely
+# additive: on a machine with no CUDA (like this one) it is a no-op and the
+# existing OpenVINO-iGPU / CPU paths run unchanged. See DEPLOYMENT.md.
+PREFER_CUDA = True
 
 # --- Module toggle ----------------------------------------------------------
 ENABLE_TRACKING = True
