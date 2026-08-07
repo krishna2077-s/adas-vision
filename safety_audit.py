@@ -223,6 +223,11 @@ def report(a):
           f"({len(a['late'])/N*100:.2f}%)")
     for f, lbl, d, ttc, lv in a["late"][:6]:
         print(f"    f{f} near {lbl} {d}m ttc {ttc}s lvl {LEVEL_NAMES[lv]}")
+    if a["late"]:
+        print("    (expected: the escalation ratchet's confirmation window — ESC_BRAKE 3-of-5,"
+              " ESC_EMERGENCY 2-of-3 — as the committed level climbs to BRAKE/EMERGENCY on a")
+        print("    genuinely-closing hazard over 1-3 frames; a deliberate guard against phantom"
+              " hard-braking, not a missed hazard. Investigate only if a frame STAYS < BRAKE.)")
 
     print(f"\n[CHURN] level changes: {a['changes']} ({a['changes']/N*100:.2f}%/frame)")
 
