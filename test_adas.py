@@ -585,6 +585,60 @@ def test_lane_detector_survives_malformed_frame():
 
 
 # ---------------------------------------------------------------------------
+# async detector — non-blocking, newest-frame-wins (threading correctness)
+# ---------------------------------------------------------------------------
+
+def test_async_detector_produces_and_newest_wins():
+    """The worker produces the submitted frame's result, ages it, flags new-once,
+    and drops stale pending frames (newest-frame-wins). Uses an injected fake
+    detector so no model is loaded."""
+    import time
+    from async_detector import AsyncObjectDetector
+
+    class FakeRes:
+        def __init__(self, tag): self.tag = tag; self.detections = []
+
+    class FakeDet:
+        def __init__(self): self.n = 0
+        def process(self, frame, lane_x):
+            self.n += 1
+            time.sleep(0.003)                       # simulate a little work
+            return FakeRes(int(frame[0, 0, 0])), None
+
+    ad = AsyncObjectDetector(64, 64, detector=FakeDet())
+    try:
+        r, age, new = ad.latest()
+        assert r is None and not new, "reported a result before any submit"
+
+        f = np.zeros((64, 64, 3), np.uint8); f[0, 0, 0] = 7
+        ad.submit(f, 32.0)
+        r = None; deadline = time.time() + 2.0
+        while time.time() < deadline:
+            r, age, new = ad.latest()
+            if r is not None:
+                break
+            time.sleep(0.005)
+        assert r is not None and r.tag == 7, "worker never produced the submitted frame"
+        assert new is True and age is not None and age >= 0, "first result not flagged fresh"
+        _, _, new2 = ad.latest()
+        assert new2 is False, "same result flagged new twice"
+
+        # newest-frame-wins: burst of submits, latest must converge to the last tag
+        for tag in (10, 20, 30):
+            fb = np.zeros((64, 64, 3), np.uint8); fb[0, 0, 0] = tag
+            ad.submit(fb, 0.0)
+        deadline = time.time() + 2.0
+        while time.time() < deadline:
+            r, _, _ = ad.latest()
+            if r is not None and r.tag == 30:
+                break
+            time.sleep(0.005)
+        assert r.tag == 30, f"newest-frame-wins failed (got tag {r.tag})"
+    finally:
+        ad.stop()
+
+
+# ---------------------------------------------------------------------------
 # runner
 # ---------------------------------------------------------------------------
 

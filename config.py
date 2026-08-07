@@ -448,6 +448,13 @@ COLOR_TRACK_ID = (255, 255, 255)   # track-ID tag colour (BGR)
 # --- Module toggle ----------------------------------------------------------
 ENABLE_TRACKING = True
 
+# Run object detection on a background thread (Module 14, async_detector.py) so
+# YOLO churns continuously on the iGPU (~35 fps) instead of once per main-loop
+# pass. Keeps the detection interval under the safe budget so the Phase-17
+# reduced-cadence floor rarely engages. The engine is fed the real detection age,
+# so safety is unchanged either way. Off by default (opt-in, --async in main.py).
+ENABLE_ASYNC_DETECTION = False
+
 # ===========================================================================
 # PHASE 9 — Advisory simulation layers (Modules 5-9)
 # ===========================================================================

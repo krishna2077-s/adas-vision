@@ -100,11 +100,17 @@ def run(
         except ImportError as exc:
             logger.warning(f"Learned road detection unavailable ({exc}) — using classical fallback.")
 
-    object_detector = None
+    object_detector = None      # synchronous detector (default)
+    async_detector = None       # Module 14: background-thread detector (opt-in)
     if enable_objects:
         try:
-            from object_detection import ObjectDetector
-            object_detector = ObjectDetector(frame_width=w, frame_height=h)
+            if cfg.ENABLE_ASYNC_DETECTION:
+                from async_detector import AsyncObjectDetector
+                async_detector = AsyncObjectDetector(w, h)
+                logger.info("Object detection: ASYNC (Module 14, worker thread on the iGPU).")
+            else:
+                from object_detection import ObjectDetector
+                object_detector = ObjectDetector(frame_width=w, frame_height=h)
         except ImportError as exc:
             logger.warning(f"Object detection disabled: {exc}")
             logger.warning("Continuing with lane detection only.")
@@ -210,6 +216,8 @@ def run(
                         road_detector.reset()
                     if learned_road_detector is not None:
                         learned_road_detector.reset()
+                    if async_detector is not None:
+                        async_detector.reset()
                     for m in (bev_projector, fusion, planner, controller, driver_monitor,
                               fcw, traffic_light_reader, sign_recognizer):
                         if m is not None:
@@ -241,6 +249,8 @@ def run(
             tracks = None
             lane_center_x = None
             plan = cmd = fcw_state = None   # hoisted so the drive logger sees them
+            detection_age = 0.0             # async: seconds since the freshest detection
+            is_new = True                   # async: did a fresh detection arrive this frame?
 
             # ── Module 1: lanes (paint) → 1c: learned road → 1b: classical ───
             if lane_detector is not None:
@@ -262,13 +272,25 @@ def run(
                             lane_result = road_result
                 lane_center_x = lane_result.lane_center_x
 
-            # ── Module 2: objects ─────────────────────────────────────
+            # ── Module 2: objects — synchronous, or async (Module 14) ──
             if object_detector is not None:
                 obj_result, annotated = object_detector.process(annotated, lane_center_x)
+            elif async_detector is not None:
+                async_detector.submit(frame, lane_center_x)     # RAW clean frame -> worker
+                obj_result, det_age, is_new = async_detector.latest()
+                detection_age = det_age or 0.0
+                if obj_result is not None:
+                    annotated = async_detector.annotate(annotated, obj_result)
 
             # ── Module 4: track objects across frames (stable IDs) ────
             if tracker is not None:
-                tracks = tracker.update(obj_result.detections)
+                # async: fold in a detection only when it's FRESH, else coast — the
+                # tracker's motion model carries known objects between detections.
+                if async_detector is not None:
+                    dets = obj_result.detections if (obj_result is not None and is_new) else []
+                else:
+                    dets = obj_result.detections
+                tracks = tracker.update(dets)
                 annotated = tracker.annotate(annotated, tracks)
 
             # ── Module 11: scene understanding (lights + signs) ───────
@@ -290,7 +312,7 @@ def run(
                 logger.debug(f"scene understanding skipped: {exc}")
 
             # ── Module 3: fuse into one decision, then draw its HUD ────
-            decision = engine.process(lane_result, tracks)
+            decision = engine.process(lane_result, tracks, detection_age_s=detection_age)
             annotated = engine.draw_hud(annotated, decision)
 
             # ── Modules 5-9: advisory SIMULATION overlays ─────────────
@@ -380,6 +402,8 @@ def run(
             screenshot_idx += 1
 
     cap.release()
+    if async_detector is not None:
+        async_detector.stop()          # join the detection worker thread
     if driver_cap is not None:
         driver_cap.release()
     if writer:
@@ -426,12 +450,18 @@ Examples
                    help="Driver-facing camera index for attention monitoring (Module 9).")
     p.add_argument("--log", type=str, default=None, metavar="PATH",
                    help="Record a black-box drive log (.jsonl) — replay it with replay_log.py.")
+    p.add_argument("--async", dest="async_det", action="store_true",
+                   help="Run object detection on a background thread (Module 14) — YOLO on the "
+                        "iGPU in parallel with the CPU-side stages. Helps most when the road "
+                        "model is idle (marked roads); see README on the dual-net iGPU limit.")
 
     return p.parse_args()
 
 
 if __name__ == "__main__":
     args = _parse_args()
+    if args.async_det:
+        cfg.ENABLE_ASYNC_DETECTION = True
     source = args.camera_index if args.camera else args.video
     run(
         source=source,
