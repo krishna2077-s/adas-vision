@@ -540,6 +540,81 @@ def test_tracker_predicted_box_leads_on_coast():
         f"pred={pred} bbox={t.bbox}")
 
 
+def test_tracker_fast_continuous_object_keeps_single_id():
+    """The bbox-EMA-lag limitation flagged (not fixed) in Phase 16: a fast object
+    matched EVERY frame (never coasting) could still lose its ID, because the
+    association reference was the last SMOOTHED box, which at TRACK_BBOX_EMA=0.5
+    lags a fast-moving raw detection enough to drop IoU below TRACK_IOU_MIN —
+    spawning a duplicate track mid-motion, not just after a dropout. Association
+    now predicts forward whenever velocity is trustworthy, matched or not, so a
+    fast object seen on every single frame must keep exactly one identity."""
+    from tracker import MultiObjectTracker
+    trk = MultiObjectTracker()
+    seen_ids = set()
+    for k in range(cfg.TRACK_MIN_HITS + 15):            # fast, steady, NEVER coasts
+        x = 200 + k * 30                                # ~30px/frame -- orphaned pre-fix
+        tracks = trk.update([_det(x, 400, x + 90, 520)])
+        seen_ids.update(t.id for t in tracks if t.confirmed)
+    assert seen_ids, "track never confirmed"
+    assert len(seen_ids) == 1, (
+        f"fast continuously-tracked object spawned duplicate IDs: {sorted(seen_ids)}")
+    assert len(trk.tracks) == 1, (
+        f"a duplicate track was spawned alongside the original: {len(trk.tracks)} tracks alive")
+
+
+def test_tracker_predict_always_off_restores_phase16_behaviour():
+    """TRACK_PREDICT_ALWAYS=False must restore the Phase-16 rule exactly: predict
+    only for a track that missed a frame. Keeps the escape hatch honest, and pins
+    that the duplicate-ID fix really is the always-predict rule and nothing else."""
+    from tracker import MultiObjectTracker
+    saved = cfg.TRACK_PREDICT_ALWAYS
+    cfg.TRACK_PREDICT_ALWAYS = False
+    try:
+        trk = MultiObjectTracker()
+        seen_ids = set()
+        for k in range(cfg.TRACK_MIN_HITS + 15):       # same fast object as the fix test
+            x = 200 + k * 30
+            tracks = trk.update([_det(x, 400, x + 90, 520)])
+            seen_ids.update(t.id for t in tracks if t.confirmed)
+        assert len(seen_ids) > 1, (
+            "with TRACK_PREDICT_ALWAYS off, the Phase-16 bbox-EMA-lag orphaning should "
+            f"still occur — the escape hatch is not actually restoring it (ids={seen_ids})")
+    finally:
+        cfg.TRACK_PREDICT_ALWAYS = saved
+
+
+# ---------------------------------------------------------------------------
+# safety_audit.py — the CI gate must itself run
+# ---------------------------------------------------------------------------
+
+def test_safety_audit_tool_runs():
+    """safety_audit.py is the load-bearing gate (DEPLOYMENT.md step 3) and the
+    only check that exercises the ASSEMBLED system on the real decision path —
+    but nothing tested the tool itself, so it broke silently: it monkeypatches
+    DecisionEngine._assess_trust with a fixed-signature wrapper, and Phase 17
+    added a detection_age_s parameter, crashing the auditor on its first frame.
+    A few real frames through audit() is enough to catch that whole class of
+    break (signature drift, a renamed engine field, a changed return shape)."""
+    import os
+    if not os.path.exists("dashcam.mp4"):
+        raise Skip("dashcam.mp4 unavailable")
+    try:
+        import safety_audit
+    except Exception as exc:
+        raise Skip(f"safety_audit unavailable ({exc})")
+    try:
+        a = safety_audit.audit("dashcam.mp4", max_frames=12, quiet=True)
+    except SystemExit as exc:                 # object detector / video absent
+        raise Skip(f"audit could not start ({exc})")
+    assert a["frames"] > 0, "auditor processed no frames"
+    # the degrade-cause tap must still be wired: every degraded frame is labelled
+    assert sum(a["causes"].values()) == a["degraded"], (
+        f"degrade causes ({sum(a['causes'].values())}) do not account for every "
+        f"degraded frame ({a['degraded']}) — the _assess_trust tap is broken")
+    assert safety_audit.report(a) == (len(a["spine_hits"]) == 0), (
+        "report()'s verdict disagrees with the spine-hit count")
+
+
 # ---------------------------------------------------------------------------
 # config — safety bounds
 # ---------------------------------------------------------------------------

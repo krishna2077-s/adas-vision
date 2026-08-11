@@ -101,11 +101,15 @@ def audit(video, max_frames=10**9, spine_dist=15.0, quiet=False):
         raise SystemExit(f"[audit] object detector required for a safety audit ({exc})")
 
     # Non-invasively record WHY the engine degrades, for an honest breakdown.
+    # Signature-agnostic (*args/**kwargs) ON PURPOSE: this wrapper pins nothing
+    # about _assess_trust's parameters, so adding one to the engine can never
+    # silently break the audit. It did once — Phase 17 added detection_age_s and
+    # this tool crashed on the first frame until the wrapper was made transparent.
     _orig_assess = eng._assess_trust
     cause_ref = {"c": ""}
 
-    def _assess_wrap(lane_result, tracks, hazard, fps):
-        d, c = _orig_assess(lane_result, tracks, hazard, fps)
+    def _assess_wrap(*args, **kwargs):
+        d, c = _orig_assess(*args, **kwargs)
         cause_ref["c"] = c if d else ""
         return d, c
     eng._assess_trust = _assess_wrap

@@ -13,12 +13,14 @@ Design — a deliberately small, dependency-free tracker (a stripped-down SORT):
     - Association: greedy IoU matching of this frame's detections to existing
       tracks (no Hungarian solver, no scipy — object counts are small).
     - Motion: an optional constant-velocity model (TRACK_PREDICT_ON_COAST).
-      Each track carries a per-corner pixel velocity; a coasting (unmatched)
-      track is associated against its PREDICTED box, and a known closing hazard
-      keeps a live, bounded distance/TTC between detections instead of freezing.
-      This is what lets perception run below the video frame rate (async / high
-      fps) without a tracked threat going stale. Disable it to fall back to the
-      original constant-position behaviour.
+      Each track carries a per-corner pixel velocity; ANY track with a
+      trustworthy velocity — coasting or continuously matched — is associated
+      against its PREDICTED box, not its last smoothed one, so a fast-moving
+      object doesn't lose its ID to bounding-box smoothing lag. A known closing
+      hazard also keeps a live, bounded distance/TTC between detections instead
+      of freezing. This is what lets perception run below the video frame rate
+      (async / high fps) without a tracked threat going stale. Disable it to
+      fall back to the original constant-position behaviour.
     - Per-track kinematics: EMA-smoothed monocular distance (with the same
       spike rejection as before, but now per-object so a jump is real object
       motion, not an identity swap), a derived closing speed, and a real-seconds
@@ -81,7 +83,8 @@ class Track:
 
     # Constant-velocity motion model — per-corner pixel velocity (px/s), zero
     # until the track has been matched a couple of times. Enables predicted-box
-    # association after a dropout and honest coasting between detections.
+    # association (whether coasting or continuously matched) and honest coasting
+    # between detections.
     vx1: float = 0.0
     vy1: float = 0.0
     vx2: float = 0.0
@@ -243,13 +246,17 @@ class MultiObjectTracker:
         detections = detections or []
 
         # ── Greedy IoU association (highest overlap first) ────────────
-        # A track that missed the previous frame is matched against its PREDICTED
-        # box (constant-velocity) so a fast object re-acquires its ID instead of
-        # spawning a new track; a continuously-tracked object uses its measured box.
+        # Every track with a trustworthy velocity is matched against its PREDICTED
+        # box, whether it coasted last frame or was matched last frame. A fast
+        # object's EMA-smoothed box (TRACK_BBOX_EMA) lags the raw detection by
+        # roughly a full frame-step even with zero missed detections, and that lag
+        # alone can drop IoU below TRACK_IOU_MIN — orphaning the track into a
+        # duplicate ID during ordinary continuous tracking, not just after a gap.
+        # Predicting forward by the known velocity closes that gap either way.
         pairs = []
         for ti, trk in enumerate(self.tracks):
-            if (trk.time_since_update > 0 and cfg.TRACK_PREDICT_ON_COAST
-                    and trk._vel_ready()):
+            if (cfg.TRACK_PREDICT_ON_COAST and trk._vel_ready()
+                    and (cfg.TRACK_PREDICT_ALWAYS or trk.time_since_update > 0)):
                 ref = trk.predict_box(dt)
             else:
                 ref = trk.bbox

@@ -434,11 +434,19 @@ TRACK_BBOX_EMA = 0.5    # EMA weight smoothing each track's bounding box
 
 # --- Constant-velocity motion model -----------------------------------------
 # Lets perception run below the video frame rate (async / high-fps) without a
-# tracked hazard going stale: a coasting track is associated against its
-# PREDICTED box, and a KNOWN closing hazard keeps a live (bounded) distance/TTC
-# between detections instead of freezing. Set TRACK_PREDICT_ON_COAST = False for
-# the original constant-position behaviour.
+# tracked hazard going stale, AND protects fast objects from bounding-box
+# smoothing lag during ordinary continuous tracking: any track with a
+# trustworthy velocity (coasting or matched every frame) is associated against
+# its PREDICTED box, not its last smoothed one. A KNOWN closing hazard also
+# keeps a live (bounded) distance/TTC between detections instead of freezing.
+# Set TRACK_PREDICT_ON_COAST = False for the original constant-position
+# behaviour.
 TRACK_PREDICT_ON_COAST  = True
+TRACK_PREDICT_ALWAYS    = True  # predict for CONTINUOUSLY-MATCHED tracks too, not just
+                                # coasting ones. False restores the Phase-16 behaviour
+                                # (predict only after a missed detection), which loses a
+                                # fast object's ID to bbox-EMA lag mid-motion. Requires
+                                # TRACK_PREDICT_ON_COAST.
 TRACK_VEL_EMA           = 0.4   # EMA weight on each track's per-corner pixel velocity
 TRACK_VEL_MIN_HITS      = 2     # matched updates before the velocity is trusted for prediction
 TRACK_COAST_PREDICT_MAX = 5     # max consecutive coast frames to extrapolate distance/TTC
