@@ -291,6 +291,7 @@ fprintf('  log_data saved to MATLAB workspace.\n\n');
 
 rx_sock.delete();
 tx_sock.delete();
+end
 
 
 % ===========================================================================

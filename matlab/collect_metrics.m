@@ -187,6 +187,7 @@ if opt.PlotSummary
 end
 
 fprintf('\n  collect_metrics done.\n');
+end
 
 
 % ===========================================================================
