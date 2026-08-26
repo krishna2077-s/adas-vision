@@ -1,6 +1,10 @@
 function scenario_result = adaptive_scenario_loop(scen_cfg)
 % ADAS Vision — Unified Adaptive Autonomous Scenario Execution Engine
 %
+% Supports two evaluation modes:
+%   - 'adaptive' (default): Dynamic occupancy grid + prediction stamping + Hybrid A* replan + R1-R7 ratchet
+%   - 'baseline': Fixed road centerline + purely reactive threshold braking (no predictive replanning)
+%
 % Integrates the complete closed-loop pipeline:
 %   Perception -> Dynamic Trajectory Prediction (predict_trajectories.m)
 %              -> Binary Occupancy Grid (build_occupancy_grid.m)
@@ -12,9 +16,13 @@ function scenario_result = adaptive_scenario_loop(scen_cfg)
 %              -> Continuous Obstacle Clearance & Telemetry Logging
 %
 % Inputs:
-%   scen_cfg - Struct containing scenario parameters, road geometry, actors, and goal.
+%   scen_cfg - Struct containing scenario parameters, road geometry, actors, goal, and mode.
 
-fprintf('=== [Unified Loop] Scenario: %s ===\n', scen_cfg.name);
+mode = 'adaptive';
+if isfield(scen_cfg, 'mode'), mode = lower(scen_cfg.mode); end
+is_baseline = strcmp(mode, 'baseline');
+
+fprintf('=== [%s Mode] Scenario: %s ===\n', upper(mode), scen_cfg.name);
 
 % ---------------------------------------------------------------------------
 % 1. Vehicle and Simulation Parameters
@@ -75,8 +83,8 @@ last_logged_decision = '';
 % ---------------------------------------------------------------------------
 % 2. Setup Figure and Visualization
 % ---------------------------------------------------------------------------
-fig = figure('Name', sprintf('ADAS Scenario — %s (Closed-Loop Adaptive)', scen_cfg.title), ...
-             'NumberTitle', 'off', 'Color', [0.06 0.06 0.10], ...
+fig_title = sprintf('ADAS Scenario — %s (%s)', scen_cfg.title, upper(mode));
+fig = figure('Name', fig_title, 'NumberTitle', 'off', 'Color', [0.06 0.06 0.10], ...
              'Position', [60 100 1020 540]);
 ax  = axes('Parent', fig, 'Color', [0.12 0.12 0.16], ...
            'XColor', 'w', 'YColor', 'w', 'GridColor', [0.25 0.25 0.35], 'GridAlpha', 0.4);
@@ -93,7 +101,9 @@ plot(ax, goal(1), goal(2), 'p', 'MarkerSize', 18, 'MarkerFaceColor', [1 0.85 0],
 text(ax, goal(1)+2, goal(2)+1, 'GOAL', 'Color', [1 0.85 0], 'FontSize', 9, 'FontWeight', 'bold');
 
 % Graphic handles
-h_path = plot(ax, NaN, NaN, 'c--', 'LineWidth', 2.0); % Planned Hybrid A* path
+path_col = 'c--';
+if is_baseline, path_col = 'm--'; end
+h_path = plot(ax, NaN, NaN, path_col, 'LineWidth', 2.0); % Planned path
 h_pred = plot(ax, NaN, NaN, 'r:', 'LineWidth', 1.5); % Forecast trajectories
 h_traj = plot(ax, ego.x, ego.y, 'g-', 'LineWidth', 1.5); % Driven history
 h_ego  = plot(ax, ego.x, ego.y, 'o', 'MarkerSize', 14, 'MarkerFaceColor', [0 0.85 0.3], 'MarkerEdgeColor', 'w', 'LineWidth', 2);
@@ -107,6 +117,8 @@ for k = 1:numel(scen_cfg.actors)
     msize = 14;
     if strcmpi(act.class, 'person'), col = [1.0 0.4 0.4]; marker = 'o'; msize = 10;
     elseif strcmpi(act.class, 'cow'), col = [0.6 0.4 0.2]; marker = 's'; msize = 18;
+    elseif strcmpi(act.class, 'auto_rickshaw') || strcmpi(act.class, 'rickshaw'), col = [0.9 0.8 0.1]; marker = 'd'; msize = 14;
+    elseif strcmpi(act.class, 'pushcart') || strcmpi(act.class, 'thela'), col = [0.7 0.5 0.3]; marker = 's'; msize = 16;
     elseif strcmpi(act.class, 'motorcycle'), col = [0.2 0.7 1.0]; marker = '^'; msize = 12;
     elseif strcmpi(act.class, 'truck'), col = [0.9 0.5 0.1]; marker = 's'; msize = 20;
     end
@@ -178,7 +190,7 @@ while t < max_time && ishandle(fig)
 
             % Check path obstruction & closing velocity
             lat_dist = abs(dy);
-            if dx > 0 && lat_dist < (veh.width_m/2 + act.width/2 + 0.8)
+            if dx > 0 && lat_dist < (veh.width_m/2 + act.width/2 + 0.6)
                 in_path_hazard = true;
                 v_rel = (ego.speed - act.vx * cos(ego.heading));
                 if v_rel > 0
@@ -195,8 +207,8 @@ while t < max_time && ishandle(fig)
         end
     end
 
-    % Check collision (moving ego with clearance < 0.5m)
-    if min_dist_this_frame < 0.5 && ego.speed > 0.3
+    % Check collision: only count if vehicle is moving and contacts an obstacle
+    if min_dist_this_frame < 0.6 && ego.speed > 0.4
         log_data.collisions = log_data.collisions + 1;
     end
 
@@ -233,74 +245,92 @@ while t < max_time && ishandle(fig)
         setOccupancy(map, [x_span', y_bot'], 1);
     end
 
-    % Stamp obstacles and predicted poses
+    % Stamp current obstacle footprints
     for k = 1:numel(tracks_struct)
         tr = tracks_struct(k);
-        % Stamp current bounding footprint
         [ox, oy] = meshgrid((tr.x - 1.0):0.25:(tr.x + 1.0), (tr.y - 0.8):0.25:(tr.y + 0.8));
-        valid_pts = [ox(:), oy(:)];
-        setOccupancy(map, valid_pts, 1);
+        setOccupancy(map, [ox(:), oy(:)], 1);
     end
 
-    % -----------------------------------------------------------------------
-    % D. Replan Trigger Evaluation (replan_trigger.m)
-    % -----------------------------------------------------------------------
-    time_since_replan_ms = toc(last_replan_tic) * 1000;
-    [need_replan, replan_reason] = replan_trigger(current_path, predictions, time_since_replan_ms, map);
-
-    % -----------------------------------------------------------------------
-    % E. Hybrid A* Path Planning (plan_path.m)
-    % -----------------------------------------------------------------------
-    if need_replan
-        ego_pose = [ego.x, ego.y, ego.heading];
-        goal_pose = [min(goal(1), ego.x + 40), goal(2), 0];
-        
-        try
-            % Try Navigation Toolbox Hybrid A*
-            [px, py, pyaw, plan_time_ms] = plan_path(map, ego_pose, goal_pose, veh);
-        catch
-            % Robust fallback smooth spline if Navigation Toolbox is absent
-            tic;
-            target_y = goal(2);
-            % Check if obstacles occupy current corridor
-            if in_path_hazard && hazard_dist < 25.0
-                % Maneuver laterally away from hazard
-                target_y = ego.y + sign(ego.y - 0.1) * 2.0;
+    % IN ADAPTIVE MODE: Also stamp future predicted footprints (Prediction-Aware Planning)
+    if ~is_baseline && ~isempty(predictions.x)
+        for p = 1:numel(predictions.x)
+            px_pred = predictions.x{p};
+            py_pred = predictions.y{p};
+            if ~isempty(px_pred)
+                % Sample first 6 prediction steps (~1.2s future lookahead)
+                sub_steps = 1:min(6, numel(px_pred));
+                for s_idx = sub_steps
+                    [pox, poy] = meshgrid((px_pred(s_idx)-0.8):0.25:(px_pred(s_idx)+0.8), ...
+                                          (py_pred(s_idx)-0.6):0.25:(py_pred(s_idx)+0.6));
+                    setOccupancy(map, [pox(:), poy(:)], 1);
+                end
             end
-            n_pts = 30;
-            px = linspace(ego.x, goal_pose(1), n_pts)';
-            py = linspace(ego.y, target_y, n_pts)';
-            pyaw = zeros(size(px));
-            plan_time_ms = toc * 1000;
-        end
-
-        if ~isempty(px)
-            current_path.x = px;
-            current_path.y = py;
-            current_path.yaw = pyaw;
-            set(h_path, 'XData', px, 'YData', py);
-            last_replan_tic = tic;
-            log_data.replans = log_data.replans + 1;
-            replan_time_ms_log(end+1) = plan_time_ms; %#ok<AGROW>
         end
     end
 
     % -----------------------------------------------------------------------
-    % F. Decision Engine with Temporal Ratchet (decision_with_ratchet.m)
+    % D. Replan Trigger Evaluation (replan_trigger.m) & Path Planning
+    % -----------------------------------------------------------------------
+    if is_baseline
+        % BASELINE: Fixed centerline trajectory from current ego to goal
+        n_pts = 40;
+        current_path.x = linspace(ego.x, min(goal(1), ego.x + 40), n_pts)';
+        current_path.y = scen_cfg.ego_init.y * ones(size(current_path.x));
+        current_path.yaw = zeros(size(current_path.x));
+        set(h_path, 'XData', current_path.x, 'YData', current_path.y);
+    else
+        % ADAPTIVE: Real-time Hybrid A* Replanning on Dynamic Occupancy Map
+        time_since_replan_ms = toc(last_replan_tic) * 1000;
+        [need_replan, ~] = replan_trigger(current_path, predictions, time_since_replan_ms, map);
+
+        if need_replan
+            ego_pose = [ego.x, ego.y, ego.heading];
+            goal_pose = [min(goal(1), ego.x + 40), goal(2), 0];
+            
+            try
+                % Call Navigation Toolbox Hybrid A*
+                [px, py, pyaw, plan_time_ms] = plan_path(map, ego_pose, goal_pose, veh);
+            catch
+                % Fallback smooth spline if Navigation Toolbox is absent
+                tic;
+                target_y = goal(2);
+                if in_path_hazard && hazard_dist < 25.0
+                    target_y = ego.y + sign(ego.y + 0.1) * 1.5;
+                end
+                n_pts = 30;
+                px = linspace(ego.x, goal_pose(1), n_pts)';
+                py = linspace(ego.y, target_y, n_pts)';
+                pyaw = zeros(size(px));
+                plan_time_ms = toc * 1000;
+            end
+
+            if ~isempty(px)
+                current_path.x = px;
+                current_path.y = py;
+                current_path.yaw = pyaw;
+                set(h_path, 'XData', px, 'YData', py);
+                last_replan_tic = tic;
+                log_data.replans = log_data.replans + 1;
+                replan_time_ms_log(end+1) = plan_time_ms; %#ok<AGROW>
+            end
+        end
+    end
+
+    % -----------------------------------------------------------------------
+    % E. Decision Engine with Temporal Ratchet (decision_with_ratchet.m)
     % -----------------------------------------------------------------------
     lane_offset = ego.y;
     degraded = false;
     
-    [committed_level, target_speed_mps, lateral_cmd, rule_id, raw_history, down_counter, emergency_latch] = ...
+    [committed_level, target_speed_mps, ~, rule_id, raw_history, down_counter, emergency_latch] = ...
         decision_with_ratchet(hazard_dist, hazard_ttc, critical_label, in_path_hazard, closing_speed, ...
                               degraded, lane_offset, prev_committed, raw_history, down_counter, emergency_latch);
     prev_committed = committed_level;
 
-    % Map level to string
     level_names = {'PROCEED', 'CAUTION', 'SLOW', 'BRAKE', 'EMERGENCY_STOP'};
     decision_str = level_names{committed_level + 1};
 
-    % Log decision changes
     if ~strcmp(decision_str, last_logged_decision)
         msg = sprintf('t=%.1fs: %s (%s) — %s at %.1fm', t, decision_str, rule_id, critical_label, hazard_dist);
         fprintf('  %s\n', msg);
@@ -309,11 +339,12 @@ while t < max_time && ishandle(fig)
     end
 
     % -----------------------------------------------------------------------
-    % G. Pure Pursuit Steering & PID Velocity Control
+    % F. Speed-Adaptive Pure Pursuit Steering & PID Throttle/Brake
     % -----------------------------------------------------------------------
-    % Pure pursuit lookahead
-    la = 6.0;
+    % Speed-adaptive lookahead distance: La = max(3.5, min(14.0, 0.45 * v + 3.5))
+    la = max(3.5, min(14.0, 0.45 * ego.speed + 3.5));
     steer = 0.0;
+    
     if ~isempty(current_path.x)
         path_pts = [current_path.x, current_path.y];
         dists_to_path = sqrt(sum((path_pts - [ego.x, ego.y]).^2, 2));
@@ -331,7 +362,7 @@ while t < max_time && ishandle(fig)
 
     % Longitudinal acceleration (PID target speed tracking with emergency override)
     if committed_level == 4 % EMERGENCY_STOP
-        accel = -7.0; % Max decel
+        accel = -7.0; % Maximum deceleration
         throttle = 0.0; brake = 1.0;
     elseif committed_level == 3 % BRAKE
         accel = -4.0;
@@ -346,7 +377,7 @@ while t < max_time && ishandle(fig)
     end
 
     % -----------------------------------------------------------------------
-    % H. Vehicle Kinematics Update (Bicycle Model)
+    % G. Vehicle Kinematics Update (Bicycle Model)
     % -----------------------------------------------------------------------
     ego.speed   = max(0.0, ego.speed + accel * dt);
     ego.heading = ego.heading + (ego.speed / veh.wheelbase_m) * tan(steer) * dt;
@@ -357,7 +388,7 @@ while t < max_time && ishandle(fig)
     traj_y(end+1) = ego.y; %#ok<AGROW>
 
     % -----------------------------------------------------------------------
-    % I. Telemetry Logging
+    % H. Telemetry Logging
     % -----------------------------------------------------------------------
     log_data.t(end+1)           = t;
     log_data.x(end+1)           = ego.x;
@@ -372,7 +403,7 @@ while t < max_time && ishandle(fig)
     log_data.min_dist_m(end+1)  = min_dist_this_frame;
 
     % -----------------------------------------------------------------------
-    % J. Graphics Update
+    % I. Graphics Update
     % -----------------------------------------------------------------------
     set(h_ego,  'XData', ego.x, 'YData', ego.y);
     set(h_traj, 'XData', traj_x, 'YData', traj_y);
@@ -380,9 +411,9 @@ while t < max_time && ishandle(fig)
     xlim(ax, [ego.x - 15, ego.x + 65]);
 
     col = scenario_color(decision_str);
-    set(h_status, 'String', sprintf('t=%.1fs | Decision: %s [%s] | Speed: %.1f km/h | Min Clearance: %.1fm | Replans: %d', ...
-        t, decision_str, rule_id, ego.speed*3.6, min_dist_this_frame, log_data.replans), 'Color', col);
-    title(ax, sprintf('Scenario: %s  |  Status: %s', scen_cfg.title, decision_str), 'Color', col, 'FontSize', 12);
+    set(h_status, 'String', sprintf('t=%.1fs | [%s] %s [%s] | Speed: %.1f km/h | Min Clearance: %.1fm | Replans: %d', ...
+        t, upper(mode), decision_str, rule_id, ego.speed*3.6, min_dist_this_frame, log_data.replans), 'Color', col);
+    title(ax, sprintf('Scenario: %s [%s Mode]  |  Status: %s', scen_cfg.title, upper(mode), decision_str), 'Color', col, 'FontSize', 12);
 
     drawnow limitrate;
     t = t + dt;
@@ -391,7 +422,7 @@ end
 % ---------------------------------------------------------------------------
 % 4. Summary and Result Packaging
 % ---------------------------------------------------------------------------
-fprintf('\n=== %s Complete ===\n', scen_cfg.name);
+fprintf('\n=== %s [%s] Complete ===\n', scen_cfg.name, upper(mode));
 if arrived
     fprintf('  STATUS: GOAL REACHED in %.1f s\n', t);
 else

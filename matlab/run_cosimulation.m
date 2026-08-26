@@ -341,11 +341,25 @@ function obs = tracks_to_world(tracks, ego)
     if isempty(tracks), return; end
     for k = 1:numel(tracks)
         t = tracks{k};
-        if ~t.in_path, continue; end
         if isempty(t.distance_m) || isnan(t.distance_m), continue; end
-        dx = t.distance_m * cos(ego.heading);
-        dy = t.distance_m * sin(ego.heading);
-        obs(end+1,:) = [ego.x + dx, ego.y + dy]; %#ok<AGROW>
+        
+        % Calculate lateral displacement in ego frame
+        lat_offset_m = 0.0;
+        if isfield(t, 'lateral_offset_m') && ~isempty(t.lateral_offset_m)
+            lat_offset_m = t.lateral_offset_m;
+        elseif isfield(t, 'bbox') && numel(t.bbox) >= 4
+            % Monocular pinhole geometry: camera center=640px, focal length=700px
+            bbox_center_x = (t.bbox(1) + t.bbox(3)) / 2;
+            img_center = 640.0;
+            focal_px = 700.0;
+            lat_offset_m = ((bbox_center_x - img_center) / focal_px) * t.distance_m;
+        end
+        
+        % Transform [longitudinal, lateral] from ego frame to world frame
+        long_dist = t.distance_m;
+        world_x = ego.x + long_dist * cos(ego.heading) - lat_offset_m * sin(ego.heading);
+        world_y = ego.y + long_dist * sin(ego.heading) + lat_offset_m * cos(ego.heading);
+        obs(end+1,:) = [world_x, world_y]; %#ok<AGROW>
     end
 end
 

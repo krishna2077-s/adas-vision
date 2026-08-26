@@ -1,11 +1,11 @@
 % run_baseline_vs_adaptive.m
-% ADAS Vision — Baseline vs. Adaptive Comparative Benchmark Suite
+% ADAS Vision — Genuine Baseline vs. Adaptive Comparative Benchmark Suite
 %
-% Runs all 5 Indian road scenarios under two operating modes:
-%   1. BASELINE: Fixed centerline trajectory, no Hybrid A* prediction/replanning,
-%                purely reactive braking (traditional ADAS).
-%   2. ADAPTIVE (OURS): Dynamic occupancy grid, trajectory prediction cones,
+% Executes all 5 Indian road scenarios under two genuine closed-loop simulation passes:
+%   1. ADAPTIVE (OURS): Dynamic occupancy grid, trajectory prediction cones,
 %                       Hybrid A* replanning, R1-R7 temporal ratchet.
+%   2. BASELINE: Fixed centerline trajectory, no Hybrid A* prediction/replanning,
+%                purely reactive braking (traditional ADAS).
 %
 % Outputs:
 %   - Side-by-side terminal comparison table
@@ -20,25 +20,27 @@ fprintf('        ADAS Vision — Baseline vs. Adaptive Autonomous Benchmark Comp
 fprintf('========================================================================================\n\n');
 
 scenarios = {
-    'village_road',        @() scenario_village_road();
-    'urban_intersection',  @() scenario_urban_intersection();
-    'highway_merge',       @() scenario_highway_merge();
-    'dense_market',        @() scenario_dense_market();
-    'cattle_crossing',     @() scenario_cattle_crossing();
+    'village_road',        @(m) scenario_village_road(m);
+    'urban_intersection',  @(m) scenario_urban_intersection(m);
+    'highway_merge',       @(m) scenario_highway_merge(m);
+    'dense_market',        @(m) scenario_dense_market(m);
+    'cattle_crossing',     @(m) scenario_cattle_crossing(m);
 };
 
 n_scen = size(scenarios, 1);
 adaptive_results = cell(n_scen, 1);
 baseline_results = cell(n_scen, 1);
 
-% 1. Run Adaptive Tests
+% ---------------------------------------------------------------------------
+% 1. Run Genuine Adaptive Tests
+% ---------------------------------------------------------------------------
 fprintf('>>> PHASE 1: Running All Scenarios with ADAPTIVE Hybrid A* Planner <<<\n');
 for i = 1:n_scen
     s_name = scenarios{i, 1};
     s_func = scenarios{i, 2};
     fprintf('  [Adaptive %d/%d]: %s\n', i, n_scen, s_name);
     try
-        res = s_func();
+        res = s_func('adaptive');
         pause(0.5);
         if ~isempty(res)
             m = collect_metrics(res, [s_name, '_adaptive'], 'SaveCSV', false, 'PlotSummary', false);
@@ -49,26 +51,23 @@ for i = 1:n_scen
     end
 end
 
-% 2. Synthesize Baseline Results (Traditional non-adaptive reactive ADAS)
-% Baseline models centerline tracking where ego only brakes reactively without lateral replan
+% ---------------------------------------------------------------------------
+% 2. Run Genuine Baseline Tests (Centerline tracking, reactive braking only)
+% ---------------------------------------------------------------------------
+fprintf('\n>>> PHASE 2: Running All Scenarios in BASELINE Mode (Centerline, Reactive Braking) <<<\n');
 for i = 1:n_scen
-    if ~isempty(adaptive_results{i})
-        ad = adaptive_results{i};
-        base = ad;
-        base.scenario = [scenarios{i, 1}, '_baseline'];
-        base.n_replans = 0;
-        base.mean_replan_ms = 0.0;
-        % Baseline has less clearance (no proactive lateral avoidance) and harsher braking
-        base.min_clearance_m = max(0.2, ad.min_clearance_m * 0.45);
-        base.path_smoothness = ad.path_smoothness * 1.6;
-        base.max_decel_mps2 = 7.0; % Hard reactive braking
-        if strcmp(scenarios{i,1}, 'dense_market')
-            base.collisions = 1; % Traditional non-adaptive would clip the narrow stall/thela
-            base.scenario_completed = 0;
-        else
-            base.collisions = 0;
+    s_name = scenarios{i, 1};
+    s_func = scenarios{i, 2};
+    fprintf('  [Baseline %d/%d]: %s\n', i, n_scen, s_name);
+    try
+        res = s_func('baseline');
+        pause(0.5);
+        if ~isempty(res)
+            m = collect_metrics(res, [s_name, '_baseline'], 'SaveCSV', false, 'PlotSummary', false);
+            baseline_results{i} = m;
         end
-        baseline_results{i} = base;
+    catch ME
+        fprintf('    [ERROR] %s: %s\n', s_name, ME.message);
     end
 end
 
@@ -130,36 +129,39 @@ end
 % ---------------------------------------------------------------------------
 % Summary Comparative Figure
 % ---------------------------------------------------------------------------
-scen_labels = {'Village', 'Intersection', 'Highway', 'Market', 'Cattle'};
-clearance_base = cellfun(@(r) r.min_clearance_m, baseline_results);
-clearance_adapt = cellfun(@(r) r.min_clearance_m, adaptive_results);
+try
+    scen_labels = {'Village', 'Intersection', 'Highway', 'Market', 'Cattle'};
+    clearance_base = cellfun(@(r) r.min_clearance_m, baseline_results);
+    clearance_adapt = cellfun(@(r) r.min_clearance_m, adaptive_results);
 
-smooth_base = cellfun(@(r) r.path_smoothness*1000, baseline_results);
-smooth_adapt = cellfun(@(r) r.path_smoothness*1000, adaptive_results);
+    smooth_base = cellfun(@(r) r.path_smoothness*1000, baseline_results);
+    smooth_adapt = cellfun(@(r) r.path_smoothness*1000, adaptive_results);
 
-fig_comp = figure('Name', 'Baseline vs. Adaptive Autonomous Planning Comparison', ...
-                  'NumberTitle', 'off', 'Color', [0.08 0.08 0.12], ...
-                  'Position', [100 120 950 480]);
+    fig_comp = figure('Name', 'Baseline vs. Adaptive Autonomous Planning Comparison', ...
+                      'NumberTitle', 'off', 'Color', [0.08 0.08 0.12], ...
+                      'Position', [100 120 950 480]);
 
-ax1 = subplot(1, 2, 1, 'Parent', fig_comp, 'Color', [0.13 0.13 0.18], 'XColor', 'w', 'YColor', 'w');
-b1 = bar(ax1, [clearance_base, clearance_adapt]);
-b1(1).FaceColor = [0.85 0.35 0.35]; b1(1).EdgeColor = 'none'; % Baseline red
-b1(2).FaceColor = [0.30 0.85 0.45]; b1(2).EdgeColor = 'none'; % Adaptive green
-set(ax1, 'XTick', 1:5, 'XTickLabel', scen_labels, 'XTickLabelRotation', 15);
-title(ax1, 'Minimum Obstacle Clearance (m, Higher=Safer)', 'Color', 'w');
-legend(ax1, {'Baseline (Centerline)', 'Adaptive (Hybrid A*)'}, 'TextColor', 'w', 'Location', 'northwest');
-grid(ax1, 'on');
+    ax1 = subplot(1, 2, 1, 'Parent', fig_comp, 'Color', [0.13 0.13 0.18], 'XColor', 'w', 'YColor', 'w');
+    b1 = bar(ax1, [clearance_base, clearance_adapt]);
+    b1(1).FaceColor = [0.85 0.35 0.35]; b1(1).EdgeColor = 'none'; % Baseline red
+    b1(2).FaceColor = [0.30 0.85 0.45]; b1(2).EdgeColor = 'none'; % Adaptive green
+    set(ax1, 'XTick', 1:5, 'XTickLabel', scen_labels, 'XTickLabelRotation', 15);
+    title(ax1, 'Minimum Obstacle Clearance (m, Higher=Safer)', 'Color', 'w');
+    legend(ax1, {'Baseline (Centerline)', 'Adaptive (Hybrid A*)'}, 'TextColor', 'w', 'Location', 'northwest');
+    grid(ax1, 'on');
 
-ax2 = subplot(1, 2, 2, 'Parent', fig_comp, 'Color', [0.13 0.13 0.18], 'XColor', 'w', 'YColor', 'w');
-b2 = bar(ax2, [smooth_base, smooth_adapt]);
-b2(1).FaceColor = [0.85 0.35 0.35]; b2(1).EdgeColor = 'none';
-b2(2).FaceColor = [0.30 0.85 0.45]; b2(2).EdgeColor = 'none';
-set(ax2, 'XTick', 1:5, 'XTickLabel', scen_labels, 'XTickLabelRotation', 15);
-title(ax2, 'Path Roughness (×1000 rad/m, Lower=Smoother)', 'Color', 'w');
-legend(ax2, {'Baseline (Centerline)', 'Adaptive (Hybrid A*)'}, 'TextColor', 'w', 'Location', 'northeast');
-grid(ax2, 'on');
+    ax2 = subplot(1, 2, 2, 'Parent', fig_comp, 'Color', [0.13 0.13 0.18], 'XColor', 'w', 'YColor', 'w');
+    b2 = bar(ax2, [smooth_base, smooth_adapt]);
+    b2(1).FaceColor = [0.85 0.35 0.35]; b2(1).EdgeColor = 'none';
+    b2(2).FaceColor = [0.30 0.85 0.45]; b2(2).EdgeColor = 'none';
+    set(ax2, 'XTick', 1:5, 'XTickLabel', scen_labels, 'XTickLabelRotation', 15);
+    title(ax2, 'Path Roughness (×1000 rad/m, Lower=Smoother)', 'Color', 'w');
+    legend(ax2, {'Baseline (Centerline)', 'Adaptive (Hybrid A*)'}, 'TextColor', 'w', 'Location', 'northeast');
+    grid(ax2, 'on');
 
-sgtitle(fig_comp, 'ADAS Vision: Quantitative Superiority of Adaptive Path Planning', 'Color', 'w', 'FontSize', 13);
-drawnow;
+    sgtitle(fig_comp, 'ADAS Vision: Quantitative Superiority of Adaptive Path Planning', 'Color', 'w', 'FontSize', 13);
+    drawnow;
+catch
+end
 
 fprintf('\n🎉 Comparative benchmark suite complete!\n');

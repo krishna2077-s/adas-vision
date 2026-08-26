@@ -1,4 +1,4 @@
-function scenario_result = scenario_urban_intersection()
+function scenario_result = scenario_urban_intersection(mode)
 % ADAS Vision — Driving Scenario 2: Unsignalised Urban Intersection
 %
 % Tests adaptive path planning and decision logic in a busy 4-way crossroad
@@ -8,10 +8,14 @@ function scenario_result = scenario_urban_intersection()
 %
 % Usage:
 %   >> scenario_urban_intersection
+%   >> scenario_urban_intersection('baseline')
+
+if nargin < 1, mode = 'adaptive'; end
 
 cfg = struct();
 cfg.name  = 'urban_intersection';
 cfg.title = 'Scenario 2 — Urban Intersection';
+cfg.mode  = mode;
 cfg.dt    = 0.033;
 cfg.max_time = 30.0;
 cfg.lane_half_width = 4.0;
@@ -38,7 +42,7 @@ car1.length= 4.2;
 
 % 2. Auto-rickshaw turning into intersection (x=55m)
 rick.id    = 'rick';
-rick.class = 'motorcycle'; % auto-rickshaw footprint
+rick.class = 'auto_rickshaw'; % Explicit auto-rickshaw actor
 rick.x     = 55.0;
 rick.y     = -20.0;
 rick.vx    = 0.4;

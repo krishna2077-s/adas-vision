@@ -48,6 +48,10 @@ function [pred_x, pred_y, pred_sizes] = predict_trajectories(tracks_struct, dt_h
                 lateral_inflation = 1.5;
             case {'cow', 'dog', 'cat'}
                 lateral_inflation = 2.0; % Animals are unpredictable
+            case {'auto_rickshaw', 'rickshaw', 'autorickshaw'}
+                lateral_inflation = 1.2; % Agile Indian 3-wheelers
+            case {'pushcart', 'thela'}
+                lateral_inflation = 0.8; % Street vendors/pushcarts
             case {'bicycle', 'motorcycle'}
                 lateral_inflation = 1.0;
             case {'car', 'truck', 'bus'}

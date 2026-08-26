@@ -1,4 +1,4 @@
-function scenario_result = scenario_cattle_crossing()
+function scenario_result = scenario_cattle_crossing(mode)
 % ADAS Vision — Driving Scenario 5: Sudden Cattle Crossing
 %
 % Tests emergency collision avoidance and adaptive resumption when cattle
@@ -8,10 +8,14 @@ function scenario_result = scenario_cattle_crossing()
 %
 % Usage:
 %   >> scenario_cattle_crossing
+%   >> scenario_cattle_crossing('baseline')
+
+if nargin < 1, mode = 'adaptive'; end
 
 cfg = struct();
 cfg.name  = 'cattle_crossing';
 cfg.title = 'Scenario 5 — Cattle Crossing';
+cfg.mode  = mode;
 cfg.dt    = 0.033;
 cfg.max_time = 32.0;
 cfg.lane_half_width = 3.5;
