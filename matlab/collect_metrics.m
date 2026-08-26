@@ -32,6 +32,21 @@ p.addParameter('PlotSummary',   true,  @islogical);
 p.parse(log_data, scenario_name, varargin{:});
 opt = p.Results;
 
+% Normalise scenario_result struct to log_data format if needed
+if isfield(log_data, 'traj_x') && ~isfield(log_data, 'x')
+    log_data.x = log_data.traj_x;
+end
+if isfield(log_data, 'traj_y') && ~isfield(log_data, 'y')
+    log_data.y = log_data.traj_y;
+end
+if isfield(log_data, 't_total') && ~isfield(log_data, 't')
+    n = max(2, numel(log_data.x));
+    log_data.t = linspace(0, log_data.t_total, n);
+end
+if isfield(log_data, 'arrived') && ~isfield(log_data, 'scenario_completed')
+    log_data.scenario_completed = log_data.arrived;
+end
+
 fprintf('=== collect_metrics: %s ===\n', scenario_name);
 
 metrics = struct();
