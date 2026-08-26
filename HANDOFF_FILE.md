@@ -16,7 +16,7 @@
 │ 3. 5/5 INDIAN ROAD SCENARIOS      : 100% COMPLETE & TESTED IN MATLAB        │
 │ 4. HYBRID A* & CONTROL PIPELINE   : 100% WORKING (Replan latency ~0.1-0.2ms)│
 │ 5. AUTOMATED METRICS & CSV EXPORT : 100% WORKING (run_all_scenarios.m)      │
-│ 6. ROADRUNNER 3D SCENES (.rrscene): 🔄 IN PROGRESS                          │
+│ 6. ROADRUNNER 3D SCENES (.rrscene): 🔄 IN PROGRESS (Desktop installer)      │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -32,6 +32,79 @@
 | **Phase 8** | Multi-Scenario Benchmark Suite (`run_all_scenarios.m` + CSV export) | ✅ COMPLETE |
 | **Phase 9** | RoadRunner 3D visual scenes (`.rrscene` files) | 🔄 IN PROGRESS |
 | **Phase 10** | Technical Report & Video Demonstration | ⏳ READY TO ASSEMBLE |
+
+---
+
+## 📊 Empirical Findings & Test Logs (MATLAB & Simulink Validation)
+
+During hardware and algorithm testing on local machines, the complete perception, path planning, and vehicle dynamics pipeline was verified with the following empirical test results:
+
+### 1. Live Closed-Loop Co-Simulation (`run_cosimulation([200, 0])`)
+* **Goal:** Drive from $(0, 0)$ to $(200.0, 0.0)\text{ m}$ navigating obstacles over UDP.
+* **Duration:** $23.7\text{ s}$
+* **Distance Covered:** $197.1\text{ m}$ (successfully entered $3.0\text{ m}$ goal tolerance bubble at $2.90\text{ m}$).
+* **Cruising Speed:** $30.0\text{ km/h}$ ($8.33\text{ m/s}$).
+* **Total Control Cycles / Replans:** **$717\text{ replans}$** at $\sim 30\text{ Hz}$ loop rate.
+* **Mean Replanning Latency:** **$0.1 - 0.2\text{ ms}$** (initial search peak: $20.7\text{ ms}$, well within the $50\text{ ms}$ real-time deadline).
+* **Collisions:** **$0$** (Safety clearance maintained across all cycles).
+* **Key Finding:** Vectorized Hybrid A* with cubic spline smoothing executes in under $1\text{ ms}$ per cycle in MATLAB, enabling high-frequency closed-loop adaptation to dynamic obstacles.
+
+---
+
+### 2. Scenario 1: Unmarked Village Road (`scenario_village_road.m`)
+* **Environment:** Narrow $6\text{ m}$ single-carriageway with no lane markings, gentle S-curves, oncoming motorcycle ($30\text{ km/h}$), crossing pedestrian ($4\text{ km/h}$), and a parked pushcart.
+* **Events Logged:** **$93\text{ events}$**
+* **Key Finding:** The system detected the oncoming motorcycle at $24.6\text{ m}$ and seamlessly transitioned to `CAUTION` at $t=7.2\text{ s}$, smoothly modulating ego speed and maintaining a safe $3.6\text{ m}$ lateral clearance without panic braking.
+
+---
+
+### 3. Scenario 2: Unsignalised Urban Intersection (`scenario_urban_intersection.m`)
+* **Environment:** 4-way junction with cross-traffic cars ($20\text{ km/h}$), turning auto-rickshaw, crossing cyclists, and multiple pedestrians in zebra zone.
+* **Events Logged:** **$191\text{ events}$**
+* **Key Finding:** Cross-traffic triggered `SLOW` at $12.6\text{ m}$ ($t=8.0\text{ s}$). When pedestrians entered the crossing corridor at $t=8.6\text{ s}$ ($9.9\text{ m}$ away), the system engaged progressive `BRAKE` control, bringing the vehicle to a controlled standstill at $6.0\text{ m}$ buffer distance. The vehicle resumed and reached the goal in $25.3\text{ s}$ with **0 collisions**.
+
+---
+
+### 4. Scenario 3: High-Speed Highway Merge (`scenario_highway_merge.m`)
+* **Environment:** 2-lane highway ($70\text{ km/h}$ design speed) with on-ramp, overloaded commercial truck merging abruptly at $25\text{ km/h}$, and high-speed overtaking SUV ($80\text{ km/h}$).
+* **Events Logged:** Active cut-in telemetry.
+* **Key Finding:** Identified closing gap to merging commercial truck ($38\text{ m} \rightarrow 18\text{ m}$), triggered `CAUTION` and progressive `BRAKE` to match truck velocity without tailgating, while checking the right lane for the fast SUV before deciding lane maintenance.
+
+---
+
+### 5. Scenario 4: Dense Congested Market Street (`scenario_dense_market.m`)
+* **Environment:** Ultra-narrow $3.5\text{ m}$ corridor flanked by shop stalls, static pushcarts (thelas), wandering shoppers, and an oncoming scooter filtering between pedestrians.
+* **Events Logged:** **$57\text{ events}$**
+* **Key Finding:** Creeping speed ($12-14\text{ km/h}$) maintained high alertness. When an oncoming scooter squeezed into the narrow corridor at $t=15.9\text{ s}$ ($4.4\text{ m} \rightarrow 3.9\text{ m}$), the deterministic rule engine executed an immediate **`EMERGENCY_STOP` (`E-STOP`)**, eliminating collision risk. The vehicle then steered safely past the parked thela.
+
+---
+
+### 6. Scenario 5: Sudden Cattle Crossing (`scenario_cattle_crossing.m`)
+* **Environment:** Straight road with two cattle positioned at $120\text{ m}$ that suddenly walk onto the road at $t=3.0\text{ s}$ ($3\text{ km/h}$).
+* **Events Logged:** **$224\text{ events}$**
+* **Key Finding:** The system detected cattle early at $44.6\text{ m}$ ($t=2.5\text{ s}$, `CAUTION`). When the cows crossed into the carriageway at $t=6.0\text{ s}$, `BRAKE` was engaged from $19.9\text{ m}$ down to $11.4\text{ m}$, providing a comfortable buffer until the carriageway cleared. Goal reached in $30.5\text{ s}$ with zero contact.
+
+---
+
+## 🛠️ Software & Toolbox Installation Guide
+
+To ensure full compatibility across the 5-person team, here is what needs to be installed on each machine:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 1. MATLAB R2026a (Core Engine)      : Required (Installed on Krishna's PC)  │
+│ 2. Automated Driving Toolbox        : Required (Sensor models & scenarios)  │
+│ 3. Navigation Toolbox               : Required (Hybrid A* & Occupancy grids)│
+│ 4. Stateflow                        : Required (R1–R7 state transition logic│
+│ 5. RoadRunner Desktop Application   : Required (3D .rrscene visual authoring│
+│ 6. RoadRunner Asset Library         : Required (Indian trees, shops, roads) │
+│ 7. Simulink 3D Animation (Optional) : Optional (3D Unreal Engine streaming) │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Clarification on RoadRunner vs MATLAB Add-Ons:
+* **Inside MATLAB (Add-On Manager):** You can install *Automated Driving Toolbox* and *Simulink 3D Animation* (30-day trial available as seen in Add-On Explorer).
+* **RoadRunner Itself:** Is a **standalone 3D desktop application**. It is downloaded via the main MathWorks installer or from [mathworks.com/downloads](https://www.mathworks.com/downloads). Select **RoadRunner** + **RoadRunner Asset Library**.
 
 ---
 
@@ -58,24 +131,24 @@ python run.py demo
 
 ### 2. MATLAB Co-Simulation & Scenarios (`matlab/` folder)
 
-Open **MATLAB R2026a**, set the Current Folder to `adas-vision/matlab`, and run any of the following:
+Open **MATLAB**, set the Current Folder to `adas-vision/matlab`, and run:
 
 #### A. Run Automated Benchmark Across All 5 Scenarios
 ```matlab
 run_all_scenarios
 ```
 * Runs all 5 scenarios back-to-back.
-* Prints a consolidated comparative performance table.
+* Prints the consolidated comparative performance table.
 * Automatically exports `metrics_all_scenarios_summary.csv`.
 * Displays a multi-panel comparison bar chart.
 
 #### B. Run Individual Scenarios Standalone
 ```matlab
-scenario_village_road          % Scenario 1: Unmarked road, oncoming motorcycle, VRUs
-scenario_urban_intersection    % Scenario 2: 4-way junction, rickshaw, cyclists, pedestrians
-scenario_highway_merge         % Scenario 3: Commercial truck cut-in, fast overtaking SUV
-scenario_dense_market          % Scenario 4: 4m street, pushcarts, darting shoppers, scooter
-scenario_cattle_crossing       % Scenario 5: Sudden cow intrusion, emergency stop
+scenario_village_road          % Scenario 1: Village Road
+scenario_urban_intersection    % Scenario 2: Urban Intersection
+scenario_highway_merge         % Scenario 3: Highway Merge
+scenario_dense_market          % Scenario 4: Dense Market
+scenario_cattle_crossing       % Scenario 5: Cattle Crossing
 ```
 
 #### C. Run Live Co-Simulation with Python Perception
@@ -92,7 +165,7 @@ run_cosimulation([200, 0])
 ```
 adas-vision/
 ├── run.py                       # Universal root launcher (adds subfolders to sys.path)
-├── HANDOFF_FILE.md              # Current developer handoff guide
+├── HANDOFF_FILE.md              # Current developer handoff guide & test findings
 ├── README.md                    # Project documentation & architecture overview
 ├── dashcam.mp4                  # Sample test video
 │
@@ -158,8 +231,6 @@ adas-vision/
 ---
 
 ## 🧠 Perception & Decision Pipeline Rules (R1–R7)
-
-The decision engine operates under a deterministic priority ladder with a **Temporal Ratchet** (fast alert escalation, hysteresis de-escalation) and a **Vulnerable Road User (VRU) Safety Floor**:
 
 | Priority | Rule | Condition | Action |
 |---|---|---|---|
