@@ -35,11 +35,9 @@ for i = 1:n_scen
     s_func = scenarios{i, 2};
 
     fprintf('\n>>> Running [%d/%d]: %s <<<\n', i, n_scen, s_name);
-    try
-        s_func();
-        pause(1.0); % brief pause to let figure render and finish
-        if evalin('base', 'exist(''scenario_result'',''var'')')
-            res = evalin('base', 'scenario_result');
+        res = s_func();
+        pause(0.5);
+        if ~isempty(res)
             m = collect_metrics(res, s_name, 'SaveCSV', true, 'PlotSummary', false);
             results{i} = m;
         end

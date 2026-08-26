@@ -1,4 +1,4 @@
-% scenario_highway_merge.m
+function scenario_result = scenario_highway_merge()
 % ADAS Vision — Driving Scenario 3: Indian Highway Merge
 %
 % Tests vehicle navigation during highway merging with high speed differentials
@@ -59,7 +59,8 @@ cfg.actors = {truck, suv, bike};
 cfg.update_actor = @(act, t, dt, ego) update_highway_actors(act, t, dt);
 cfg.draw_background = @(ax) draw_highway_background(ax, cfg.lane_half_width);
 
-adaptive_scenario_loop(cfg);
+scenario_result = adaptive_scenario_loop(cfg);
+end
 
 % ---------------------------------------------------------------------------
 % Helper Functions

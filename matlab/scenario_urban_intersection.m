@@ -1,4 +1,4 @@
-% scenario_urban_intersection.m
+function scenario_result = scenario_urban_intersection()
 % ADAS Vision — Driving Scenario 2: Unsignalised Urban Intersection
 %
 % Tests adaptive path planning and decision logic in a busy 4-way crossroad
@@ -70,7 +70,8 @@ cfg.actors = {car1, rick, ped, cyc};
 cfg.update_actor = @(act, t, dt, ego) update_intersection_actors(act, t, dt);
 cfg.draw_background = @(ax) draw_intersection_background(ax, cfg.lane_half_width);
 
-adaptive_scenario_loop(cfg);
+scenario_result = adaptive_scenario_loop(cfg);
+end
 
 % ---------------------------------------------------------------------------
 % Helper Functions

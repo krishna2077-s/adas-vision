@@ -1,4 +1,4 @@
-% scenario_cattle_crossing.m
+function scenario_result = scenario_cattle_crossing()
 % ADAS Vision — Driving Scenario 5: Sudden Cattle Crossing
 %
 % Tests emergency collision avoidance and adaptive resumption when cattle
@@ -49,7 +49,8 @@ cfg.actors = {cow1, cow2};
 cfg.update_actor = @(act, t, dt, ego) update_cattle_actors(act, t, dt);
 cfg.draw_background = @(ax) draw_cattle_background(ax, cfg.lane_half_width);
 
-adaptive_scenario_loop(cfg);
+scenario_result = adaptive_scenario_loop(cfg);
+end
 
 % ---------------------------------------------------------------------------
 % Helper Functions

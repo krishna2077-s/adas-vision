@@ -1,4 +1,4 @@
-% scenario_dense_market.m
+function scenario_result = scenario_dense_market()
 % ADAS Vision — Driving Scenario 4: Congested Indian Market Street
 %
 % Tests autonomous navigation in an ultra-dense, unstructured urban market
@@ -69,7 +69,8 @@ cfg.actors = {thela, ped1, ped2, scoot};
 cfg.update_actor = @(act, t, dt, ego) update_market_actors(act, t, dt);
 cfg.draw_background = @(ax) draw_market_background(ax, cfg.lane_half_width);
 
-adaptive_scenario_loop(cfg);
+scenario_result = adaptive_scenario_loop(cfg);
+end
 
 % ---------------------------------------------------------------------------
 % Helper Functions

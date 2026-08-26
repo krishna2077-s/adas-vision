@@ -1,4 +1,4 @@
-% scenario_village_road.m
+function scenario_result = scenario_village_road()
 % ADAS Vision — Driving Scenario 1: Unmarked Indian Village Road
 %
 % Tests adaptive navigation on a narrow, unmarked single-carriageway road with
@@ -47,7 +47,7 @@ ped.vy    = 0.7; % crossing
 ped.width = 0.5;
 ped.length= 0.5;
 
-% 3. Parked pushcart on left shoulder (x=130, y=1.5)
+% 3. Parked pushcart on left shoulder (x=130, y=1.8)
 cart.id    = 'cart';
 cart.class = 'truck'; % static wide obstacle
 cart.x     = 130.0;
@@ -66,7 +66,8 @@ cfg.update_actor = @(act, t, dt, ego) update_village_actors(act, t, dt);
 cfg.draw_background = @(ax) draw_village_background(ax, cfg.lane_half_width);
 
 % Run unified closed loop
-adaptive_scenario_loop(cfg);
+scenario_result = adaptive_scenario_loop(cfg);
+end
 
 % ---------------------------------------------------------------------------
 % Helper Functions
