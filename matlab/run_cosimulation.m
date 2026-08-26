@@ -169,8 +169,34 @@ while t_sim < max_time && ishandle(fig)
 
     if need_replan && dist_to_goal > sim.goal_tol_m
         t_rp0 = tic;
-        path_xy = hybrid_astar([ego.x, ego.y], ego.heading, goal, obs_world, planner);
-        replan_ms = toc(t_rp0) * 1000;
+        % Build local dynamic binary occupancy map
+        grid_len = 60; grid_width = 30; res = 4;
+        occ_map = binaryOccupancyMap(grid_len, grid_width, res);
+        occ_map.GridLocationInWorld = [ego.x - 5, ego.y - 15];
+        
+        % Stamp obstacles
+        for k = 1:size(obs_world, 1)
+            [ox, oy] = meshgrid((obs_world(k,1)-1.0):0.25:(obs_world(k,1)+1.0), ...
+                                (obs_world(k,2)-0.8):0.25:(obs_world(k,2)+0.8));
+            setOccupancy(occ_map, [ox(:), oy(:)], 1);
+        end
+        
+        ego_pose = [ego.x, ego.y, ego.heading];
+        goal_pose = [min(goal(1), ego.x + 40), goal(2), 0];
+        
+        try
+            [px, py, pyaw, replan_ms] = plan_path(occ_map, ego_pose, goal_pose, veh);
+            if ~isempty(px)
+                path_xy = [px, py];
+            else
+                path_xy = hybrid_astar([ego.x, ego.y], ego.heading, goal, obs_world, planner);
+                replan_ms = toc(t_rp0) * 1000;
+            end
+        catch
+            path_xy = hybrid_astar([ego.x, ego.y], ego.heading, goal, obs_world, planner);
+            replan_ms = toc(t_rp0) * 1000;
+        end
+        
         path_idx = 1;
         last_replan_t = t_sim;
         log_data.replans = log_data.replans + 1;
