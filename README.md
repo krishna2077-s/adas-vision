@@ -141,34 +141,72 @@ Because tracking owns the per-object smoothing, the engine is just a handful of 
 
 ```
 adas-vision/
-├── config.py            ← All tunable parameters (all modules)
-├── lane_detection.py    ← Module 1: LaneDetector          (painted markings)
-├── learned_road_detection.py ← Module 1c: LearnedRoadDetector (CNN drivable-area, primary on unmarked roads)
-├── road_detection.py    ← Module 1b: RoadDetector         (classical surface following, fallback)
-├── object_detection.py  ← Module 2: ObjectDetector        (YOLOv8n)
-├── tracker.py           ← Module 4: MultiObjectTracker    (stable IDs + kinematics)
-├── decision_engine.py   ← Module 3: DecisionEngine        (fusion + arbitration)
-├── perception_bev.py    ← Module 5: BEVProjector          (bird's-eye ego frame — sim)
-├── sensor_fusion.py     ← Module 6: SimRadarFusion        (simulated radar + fusion)
-├── prediction_planning.py ← Module 7: Planner             (prediction + advisory plan)
-├── control_sim.py       ← Module 8: SimController         (simulated steering/PID — never wired)
-├── driver_monitoring.py ← Module 9: DriverMonitor         (attention: driver-facing cam)
-├── forward_collision_warning.py ← Module 10: ForwardCollisionWarning (staged TTC alert)
-├── traffic_light_state.py       ← Module 11a: TrafficLightReader (RED/AMBER/GREEN)
-├── traffic_sign_recognition.py  ← Module 11b: SignRecognizer  (GTSRB CNN + proposals)
-├── drive_logger.py      ← Module 12: DriveLogger          (black-box .jsonl recorder)
-├── replay_log.py        ← reconstruct a drive from the log alone (no models)
-├── evaluate.py          ← eval harness: latency budget + drivable-area IoU
-├── test_adas.py         ← regression tests (invariants that must not break)
-├── train_local.py       ← CPU trainer for the road model (Module 1c; --adverse = Phase 12)
-├── adverse_aug.py       ← Phase 12: rain/snow/glare/low-light/night/fog augmentation
-├── prepare_bdd_drivable.py ← Phase 12: index BDD100K drivable data into a manifest
-├── train_bdd.py         ← Phase 12: fine-tune on real BDD100K night/weather data
-├── train_signs.py       ← CPU trainer for the sign classifier (Module 11b, GTSRB)
-├── export_onnx.py / export_openvino.py / export_yolo_openvino.py ← ONNX + OpenVINO IR exporters
-├── export_yolo_tflite.py ← Phase 14: YOLOv8n -> per-tensor INT8 TFLite (Axis ARTPEC-8 edge)
-├── bench_speed.py / bench_openvino.py  ← per-backend speed benchmarks (--yolo covers YOLO)
-├── main.py              ← CLI entry point: runs the whole pipeline together
+│
+├── 📁 core/                  ← Entry point & brain
+│   ├── main.py               ← CLI entry point: runs the whole pipeline
+│   ├── config.py             ← All tunable parameters (all modules)
+│   ├── decision_engine.py    ← Module 3: DecisionEngine (fusion + arbitration)
+│   ├── frame_guard.py        ← Failsafe: drops corrupted frames before inference
+│   ├── drive_logger.py       ← Module 12: DriveLogger (black-box .jsonl recorder)
+│   └── replay_log.py         ← Reconstruct a drive from the log alone (no models)
+│
+├── 📁 perception/            ← All AI & CV modules
+│   ├── lane_detection.py     ← Module 1:  LaneDetector (painted markings)
+│   ├── learned_road_detection.py ← Module 1c: LearnedRoadDetector (CNN, primary on unmarked roads)
+│   ├── road_detection.py     ← Module 1b: RoadDetector (classical surface fallback)
+│   ├── object_detection.py   ← Module 2:  ObjectDetector (YOLOv8n)
+│   ├── async_detector.py     ← Module 14: Threaded YOLOv8 (background GPU worker)
+│   ├── tracker.py            ← Module 4:  MultiObjectTracker (stable IDs + kinematics)
+│   ├── traffic_light_state.py   ← Module 11a: TrafficLightReader (RED/AMBER/GREEN)
+│   ├── traffic_sign_recognition.py ← Module 11b: SignRecognizer (GTSRB CNN)
+│   └── driver_monitoring.py  ← Module 9:  DriverMonitor (attention: driver-facing cam)
+│
+├── 📁 simulation/            ← Advisory simulation overlays & MATLAB bridge
+│   ├── udp_bridge.py         ← Python↔MATLAB UDP bridge (port 5005/5006)
+│   ├── forward_collision_warning.py ← Module 10: ForwardCollisionWarning (staged TTC alert)
+│   ├── perception_bev.py     ← Module 5:  BEVProjector (bird's-eye ego frame)
+│   ├── sensor_fusion.py      ← Module 6:  SimRadarFusion (simulated radar + fusion)
+│   ├── prediction_planning.py ← Module 7: Planner (prediction + advisory plan)
+│   └── control_sim.py        ← Module 8:  SimController (simulated PID — never wired)
+│
+├── 📁 training/              ← Model training scripts
+│   ├── train_local.py        ← CPU/GPU trainer for road model (--adverse = Phase 12)
+│   ├── train_bdd.py          ← Fine-tune on real BDD100K night/weather data
+│   ├── train_signs.py        ← CPU trainer for the sign classifier (GTSRB)
+│   ├── adverse_aug.py        ← Phase 12: rain/snow/glare/night/fog augmentation
+│   └── prepare_bdd_drivable.py ← Index BDD100K drivable data into a manifest
+│
+├── 📁 export/                ← Model export scripts
+│   ├── export_onnx.py        ← PyTorch → ONNX (road model)
+│   ├── export_openvino.py    ← ONNX → FP16/INT8 OpenVINO IR (Intel iGPU)
+│   ├── export_yolo_onnx.py   ← YOLOv8n → ONNX
+│   ├── export_yolo_openvino.py ← YOLOv8n → OpenVINO IR
+│   └── export_yolo_tflite.py ← YOLOv8n → INT8 TFLite (Axis ARTPEC-8 edge)
+│
+├── 📁 evaluation/            ← Tests, benchmarks & safety audit
+│   ├── test_adas.py          ← Regression tests (31 invariants that must not break)
+│   ├── test_udp_bridge.py    ← UDP bridge telemetry verifier
+│   ├── safety_audit.py       ← Full-clip audit: verifies zero unsafe PROCEED outputs
+│   ├── evaluate.py           ← Eval harness: latency budget + drivable-area IoU
+│   ├── bench_speed.py        ← Overall pipeline FPS benchmark
+│   └── bench_openvino.py     ← Per-backend speed benchmark (--yolo covers YOLO)
+│
+├── 📁 demo/                  ← Web UI
+│   └── web_demo.py           ← Gradio browser app for frame-by-frame debugging
+│
+├── 📁 matlab/                ← Co-simulation scripts (run in MATLAB or MATLAB Online)
+│   ├── setup_vehicle_model.m ← Load vehicle physics + controller gains
+│   ├── run_cosimulation.m    ← Live co-sim loop (needs Python UDP bridge)
+│   ├── scenario_village_road.m      ← Standalone animated scenario
+│   ├── scenario_urban_intersection.m ← Standalone animated scenario
+│   ├── scenario_cattle_crossing.m   ← Emergency brake scenario (standalone)
+│   └── collect_metrics.m    ← Exports performance metrics → CSV + chart
+│
+├── 📁 colab/                 ← Colab training notebooks (share via Colab link)
+│
+├── README.md
+├── HANDOFF_FILE.md           ← Current project status & next steps for any developer
+├── DEPLOYMENT.md             ← Hardware deployment guide (Jetson / NVIDIA GPU)
 └── requirements.txt
 ```
 
@@ -180,20 +218,20 @@ pip install -r requirements.txt
 
 This pulls in OpenCV, NumPy, Ultralytics (which brings a CPU build of PyTorch for Module 2), and torchvision (for Module 1c). On first run, YOLOv8n weights (~6 MB) download automatically. Lane detection alone needs only OpenCV + NumPy — run with `--no-objects` if you haven't installed Ultralytics yet.
 
-**Learned road model (Module 1c):** the default weights are `drivable_idd_lraspp_adv_best.pth` (the Phase 12 adverse fine-tune from [`train_local.py --adverse`](train_local.py)). On a like-for-like A/B it beats the previous fine-tune on **both** clean (0.921 vs 0.919) and the tough night+fog+rain metric (**0.907 vs 0.826**, +8 pts) — more robust at night/in rain with no daytime cost. The base weights `drivable_idd_full_best.pth` come from [`colab/phase6c_full_idd.ipynb`](colab/phase6c_full_idd.ipynb) (val IoU 0.92). Place the `.pth` in the repo root (large files are shared via a GitHub Release, not committed) and run `python export_onnx.py` (and `python export_openvino.py` for the iGPU) once to build the fast backends. Without any weights, the system automatically falls back to the classical road detector (Module 1b) — nothing breaks, unmarked-road guidance is just less accurate.
+**Learned road model (Module 1c):** the default weights are `drivable_idd_lraspp_adv_best.pth` (the Phase 12 adverse fine-tune from [`training/train_local.py --adverse`](training/train_local.py)). On a like-for-like A/B it beats the previous fine-tune on **both** clean (0.921 vs 0.919) and the tough night+fog+rain metric (**0.907 vs 0.826**, +8 pts) — more robust at night/in rain with no daytime cost. The base weights `drivable_idd_full_best.pth` come from [`colab/phase6c_full_idd.ipynb`](colab/phase6c_full_idd.ipynb) (val IoU 0.92). Place the `.pth` in the repo root (large files are shared via a GitHub Release, not committed) and run `python export/export_onnx.py` (and `python export/export_openvino.py` for the iGPU) once to build the fast backends. Without any weights, the system automatically falls back to the classical road detector (Module 1b) — nothing breaks, unmarked-road guidance is just less accurate.
 
 **Optional extras (all graceful — the system runs without them):**
-- **OpenVINO iGPU acceleration** — `pip install openvino nncf`, then `python export_openvino.py`. On Intel hardware this is the fastest road-model backend (see *Real-time performance*); without it, `LEARNED_BACKEND="openvino"` falls back to ONNX then PyTorch.
-- **Traffic-sign recognition (Module 11b)** — needs `gtsrb_sign_cnn.pth`, trained in ~5 min on CPU with `python train_signs.py` once you've downloaded GTSRB (Kaggle: *GTSRB — German Traffic Sign*). Until then the sign recogniser is inert; traffic-**light** state works with no extra setup.
+- **OpenVINO iGPU acceleration** — `pip install openvino nncf`, then `python export/export_openvino.py`. On Intel hardware this is the fastest road-model backend (see *Real-time performance*); without it, `LEARNED_BACKEND="openvino"` falls back to ONNX then PyTorch.
+- **Traffic-sign recognition (Module 11b)** — needs `gtsrb_sign_cnn.pth`, trained in ~5 min on CPU with `python training/train_signs.py` once you've downloaded GTSRB (Kaggle: *GTSRB — German Traffic Sign*). Until then the sign recogniser is inert; traffic-**light** state works with no extra setup.
 
 ## Adverse-condition robustness (Phase 12)
 
 Two independent ways to make drivable-area detection hold up at night and in bad weather — the model's known weak spot. Both are measured against a deliberately **tougher** hard metric than before (night **+ fog + rain**, not just night+fog); on it the Phase 6c model scores ~0.78 vs ~0.92 on the old metric, so there's genuine headroom.
 
-**1. Richer synthetic augmentation (no download).** [`adverse_aug.py`](adverse_aug.py) adds rain streaks, snow, sun/headlight glare, and low-light sensor noise to the existing night/fog/blur/shadow. A 28% share of frames stay near-clean so daytime skill isn't forgotten. Retrain on the IDD data you already have:
+**1. Richer synthetic augmentation (no download).** [`training/adverse_aug.py`](training/adverse_aug.py) adds rain streaks, snow, sun/headlight glare, and low-light sensor noise to the existing night/fog/blur/shadow. A 28% share of frames stay near-clean so daytime skill isn't forgotten. Retrain on the IDD data you already have:
 
 ```bash
-python train_local.py --adverse --epochs 12 --subset 2500
+python training/train_local.py --adverse --epochs 12 --subset 2500
 ```
 
 It writes to `drivable_idd_lraspp_adv_best.pth` and its own checkpoint — the adopted model is never touched, so it's a clean A/B.
@@ -201,8 +239,8 @@ It writes to `drivable_idd_lraspp_adv_best.pth` and its own checkpoint — the a
 **2. Real BDD100K night/weather data.** Synthetic effects approximate; BDD100K has ~70k real driving frames tagged by time-of-day and weather. Download (free [BDD account](https://bdd-data.berkeley.edu) required) the **100K Images** and **Drivable Area** labels (optionally the **Detection** labels JSON for the weather/time attributes), unzip under one folder, then:
 
 ```bash
-python prepare_bdd_drivable.py --bdd-root "C:\path\to\bdd100k"
-python train_bdd.py --epochs 10 --subset 4000
+python training/prepare_bdd_drivable.py --bdd-root "C:\path\to\bdd100k"
+python training/train_bdd.py --epochs 10 --subset 4000
 ```
 
 `prepare_bdd_drivable.py` auto-detects the mask's background value and tags each frame night/adverse; `train_bdd.py` fine-tunes on top of the IDD model with a **weighted sampler** (night ×3, rain/snow/fog ×2) and selects on IoU over BDD val's **real** night/adverse frames. Both scripts self-test with `--smoke` (no data needed). Result weights: `drivable_bdd_lraspp_best.pth`.
@@ -213,10 +251,10 @@ The learned road model (Module 1c) has three stackable, retraining-free speed le
 
 - **OpenVINO on the Intel iGPU** (`LEARNED_BACKEND = "openvino"`, the default) — runs the *same* network on the integrated GPU that otherwise sits idle, and in doing so frees the CPU for YOLO (the real bottleneck — see below). Export the IR once, then benchmark:
   ```bash
-  python export_openvino.py     # ONNX -> FP16 IR + NNCF INT8 IR (needs: pip install openvino nncf)
-  python bench_openvino.py      # times every backend on your machine
+  python export/export_openvino.py     # ONNX -> FP16 IR + NNCF INT8 IR (needs: pip install openvino nncf)
+  python evaluation/bench_openvino.py  # times every backend on your machine
   ```
-- **ONNX Runtime backend** (`LEARNED_BACKEND = "onnx"`) — the portable fast path: runs the same weights ~2.8× faster than PyTorch on CPU, byte-identical segmentation, no Intel hardware needed. Export with `python export_onnx.py`.
+- **ONNX Runtime backend** (`LEARNED_BACKEND = "onnx"`) — the portable fast path: runs the same weights ~2.8× faster than PyTorch on CPU, byte-identical segmentation, no Intel hardware needed. Export with `python export/export_onnx.py`.
 - **Frame-skip** (`LEARNED_INFER_EVERY = 3`) — runs the CNN every Nth frame and reuses the mask between (the road barely moves frame-to-frame); the centreline still updates every frame. ~3× effective throughput.
 
 Measured on an **i7-8650U + Intel UHD 620 iGPU** (`bench_openvino.py`, 768×432):
@@ -251,22 +289,22 @@ Beyond perception, the repo demonstrates the *rest* of the ADAS software chain �
 
 ```bash
 # full stack (all overlays on):
-python main.py --video dashcam.mp4
+python core/main.py --video dashcam.mp4
 # add driver monitoring from a second, driver-facing camera:
-python main.py --video dashcam.mp4 --driver-cam 1
+python core/main.py --video dashcam.mp4 --driver-cam 1
 # driver monitor on its own:
-python driver_monitor_demo.py
+python perception/driver_monitor_demo.py
 ```
 
 > These layers exist to show the *shape* of a full ADAS in software. They do **not** make the system safe to drive with — a single camera, a best-effort CPU, simulated sensors, and no certification are exactly why it stays advisory. Re-read the safety notice above.
 
 ## Edge deployment feasibility (Axis ARTPEC-8)
 
-A detection model doesn't have to run on a laptop — an Axis camera SoC (**ARTPEC-8**) can run YOLO on its **DLPU** via the `larod` runtime, which wants a **per-tensor INT8 TFLite** model. [`export_yolo_tflite.py`](export_yolo_tflite.py) produces exactly that:
+A detection model doesn't have to run on a laptop — an Axis camera SoC (**ARTPEC-8**) can run YOLO on its **DLPU** via the `larod` runtime, which wants a **per-tensor INT8 TFLite** model. [`export/export_yolo_tflite.py`](export/export_yolo_tflite.py) produces exactly that:
 
 ```bash
 pip install tensorflow onnx2tf tf_keras   # optional edge extras (not in requirements.txt)
-python export_yolo_tflite.py              # YOLOv8n -> per-tensor INT8 TFLite, dashcam-calibrated
+python export/export_yolo_tflite.py       # YOLOv8n -> per-tensor INT8 TFLite, dashcam-calibrated
 ```
 
 What's **confirmed**: the conversion runs cross-platform (via `onnx2tf`, sidestepping Ultralytics' Linux-only TFLite gate) and yields the ARTPEC-8 artifact — `yolov8n_full_integer_quant.tflite`, **3.3 MB, ~3.9× smaller** than FP32, calibrated on real frames. The FP32 TFLite matches the PyTorch model **100%** on detections, so the graph translation is faithful.
@@ -277,40 +315,46 @@ What's **not yet measured**, honestly: the INT8 *accuracy number*. Desktop TFLit
 
 Measurement and reconstruction, so the system is defensible rather than just demo-able.
 
-**Evaluation harness** — `python evaluate.py`:
+**Evaluation harness** — `python evaluation/evaluate.py`:
 - **Latency budget** — times every module over real frames so the bottleneck is *measured, not guessed*. It drove all of Phase 11. YOLO started at **77% of the frame** (~249 ms on CPU); moving it to the iGPU cut it to ~57 ms. That promoted the **lane detector** to the top CPU cost, so it moved to half-resolution (~48 → ~9 ms) — which, by unsaturating the CPU, also sped up YOLO's CPU-side work. Net whole-pipeline: **3.1 → ~14 fps**. (Chasing this also caught two bugs in the harness itself — missing warmup and timing the road model every frame instead of at its frame-skip cadence — both fixed.)
 - **Drivable-area IoU** — scores the *currently deployed* road backend on held-out IDD val, so a model swap or a quantisation step can be checked for a silent accuracy regression. The OpenVINO/FP16 path scores mean **0.906** / pooled **0.911** IoU — matching training.
 
-**Black-box drive logger** — `python main.py --video dashcam.mp4 --log drive.jsonl` records one compact JSON line per frame (what it saw + decided). Reconstruct the whole drive from the log *alone* — no models re-run:
+**Black-box drive logger** — `python core/main.py --video dashcam.mp4 --log drive.jsonl` records one compact JSON line per frame (what it saw + decided). Reconstruct the whole drive from the log *alone* — no models re-run:
 
 ```bash
-python replay_log.py drive.jsonl                                   # drive summary
-python replay_log.py drive.jsonl --video dashcam.mp4 --save replay.mp4   # rebuild the annotated video
-python replay_log.py drive.jsonl --video dashcam.mp4 --dump 300 f.jpg    # one reconstructed frame
+python core/replay_log.py drive.jsonl                                         # drive summary
+python core/replay_log.py drive.jsonl --video dashcam.mp4 --save replay.mp4  # rebuild the annotated video
+python core/replay_log.py drive.jsonl --video dashcam.mp4 --dump 300 f.jpg   # one reconstructed frame
 ```
 
-**Regression tests** — `python test_adas.py` (also `pytest`-discoverable) guards the safety-relevant invariants: threshold ordering, decision-engine escalation + single-frame-spurious rejection, FCW monotonic escalation + hysteretic release, tracker ID stability + ghost rejection, traffic-light state, and live OpenVINO-vs-ONNX mask parity.
+**Regression tests** — `python evaluation/test_adas.py` (also `pytest`-discoverable) guards the safety-relevant invariants: threshold ordering, decision-engine escalation + single-frame-spurious rejection, FCW monotonic escalation + hysteretic release, tracker ID stability + ghost rejection, traffic-light state, and live OpenVINO-vs-ONNX mask parity.
 
 ## Usage
 
 ```bash
 # Webcam — both modules
-python main.py --camera
+python core/main.py --camera
 
 # Dashcam video — both modules
-python main.py --video dashcam.mp4
+python core/main.py --video dashcam.mp4
+
+# Async YOLO on GPU (recommended on NVIDIA hardware)
+python core/main.py --video dashcam.mp4 --async
 
 # Lanes only (skip YOLO)
-python main.py --video dashcam.mp4 --no-objects
+python core/main.py --video dashcam.mp4 --no-objects
 
 # Objects only
-python main.py --video dashcam.mp4 --no-lanes
+python core/main.py --video dashcam.mp4 --no-lanes
 
 # Debug overlay (ROI + raw Hough lines) and save annotated output
-python main.py --video dashcam.mp4 --debug --save output.mp4
+python core/main.py --video dashcam.mp4 --debug --save output.mp4
 
-# Record a black-box drive log (replay it later with replay_log.py)
-python main.py --video dashcam.mp4 --log drive.jsonl
+# Record a black-box drive log (replay it later with core/replay_log.py)
+python core/main.py --video dashcam.mp4 --log drive.jsonl
+
+# Launch the Gradio web debugger
+python demo/web_demo.py
 ```
 
 Controls while running:
@@ -337,7 +381,7 @@ Controls while running:
 
 ## Tuning
 
-Everything is in [config.py](config.py). The three settings that matter most:
+Everything is in [core/config.py](core/config.py). The three settings that matter most:
 
 | Setting | When to change |
 |---|---|
