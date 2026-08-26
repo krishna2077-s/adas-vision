@@ -1,4 +1,4 @@
-% udp_receiver_test.m
+run_all_scenarios% udp_receiver_test.m
 % 
 % A standalone MATLAB script to receive and parse JSON packets from a Python UDP bridge.
 % It listens on port 5005, reads the packets, parses them using jsondecode(), 

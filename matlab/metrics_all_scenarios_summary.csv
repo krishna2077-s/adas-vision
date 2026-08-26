@@ -1,1 +1,2 @@
 scenario,duration_s,distance_m,path_smoothness,collisions,mean_replan_ms,status
+dense_market,31.98,20.76,0.0003,10,0.04,FAIL (Hit)

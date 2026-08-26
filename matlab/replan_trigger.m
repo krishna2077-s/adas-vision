@@ -60,8 +60,8 @@ function [should_replan, reason] = replan_trigger(current_path, predictions, tim
         valid_points = path_points(valid_idx, :);
         
         if ~isempty(valid_points)
-            % checkOccupied checks if the given xy locations are occupied
-            is_occ = checkOccupied(occupancy_map, valid_points);
+            % getOccupancy checks if the given xy locations are occupied
+            is_occ = getOccupancy(occupancy_map, valid_points);
             if any(is_occ)
                 should_replan = true;
                 reason = 'Current path passes through newly occupied cells';

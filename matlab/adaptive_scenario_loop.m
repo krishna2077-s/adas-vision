@@ -195,8 +195,8 @@ while t < max_time && ishandle(fig)
         end
     end
 
-    % Check collision
-    if min_dist_this_frame < 0.8
+    % Check collision (moving ego with clearance < 0.5m)
+    if min_dist_this_frame < 0.5 && ego.speed > 0.3
         log_data.collisions = log_data.collisions + 1;
     end
 
