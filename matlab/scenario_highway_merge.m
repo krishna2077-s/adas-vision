@@ -6,8 +6,8 @@
 %
 % Elements:
 %   - 2-lane dual carriageway (70 km/h design speed) + 1 on-ramp merging lane
-%   - Ego vehicle: entering from the on-ramp or cruising in left lane (speed: 50 km/h)
-%   - Slow overloaded commercial truck (Tata 1613 style): merging at 25 km/h without indicator
+%   - Ego vehicle: cruising in left lane (speed: ~50 km/h)
+%   - Slow overloaded commercial truck (Tata 1613 style): merging at 25 km/h cutting into lane
 %   - Fast SUV in overtaking lane (85 km/h)
 %   - Two-wheeler riding on the shoulder against traffic
 %
@@ -19,53 +19,52 @@ fprintf('=== Scenario 3: Highway Merge ===\n');
 % ---------------------------------------------------------------------------
 % Road geometry
 % ---------------------------------------------------------------------------
-road_len_m = 300.0;
-lw         = 3.75;  % standard Indian highway lane width (m)
-merge_start = 50.0;
-merge_end   = 180.0;
+road_len_m  = 300.0;
+lw          = 3.75;  % standard Indian highway lane width (m)
+merge_start = 30.0;
+merge_end   = 160.0;
 
 % ---------------------------------------------------------------------------
 % Actors
 % ---------------------------------------------------------------------------
-% Ego vehicle (starts on main highway left lane, accelerating to cruising speed)
+% Ego vehicle (starts on main highway left lane, cruising)
 ego.x       = 0.0;
 ego.y       = lw / 2;
 ego.heading = 0.0;
 ego.speed   = 13.88; % ~50 km/h
-ego.target_speed = 16.66; % ~60 km/h
+ego.target_speed = 15.0; % ~54 km/h
 
-% Slow overloaded commercial truck in merge lane (lane y = -lw/2 - 1.5)
-truck.x       = 40.0;
-truck.y       = -lw - 1.0;
+% Slow overloaded commercial truck in merge lane
+truck.x       = 55.0;
+truck.y       = -lw * 1.1;
 truck.heading = 0.0;
 truck.speed   = 6.94; % 25 km/h
-truck.length  = 9.0;
+truck.length  = 8.5;
 truck.width   = 2.5;
-truck.merging = false;
+truck.merging = true;
 
 % Fast overtaking SUV in right lane (y = 3*lw/2)
-suv.x       = -40.0;
+suv.x       = -50.0;
 suv.y       = lw * 1.5;
 suv.heading = 0.0;
-suv.speed   = 23.6; % 85 km/h
+suv.speed   = 22.2; % 80 km/h
 suv.length  = 4.8;
 suv.width   = 1.9;
 
 % Errant two-wheeler on left shoulder
-bike.x       = 140.0;
-bike.y       = -lw - 2.5;
+bike.x       = 160.0;
+bike.y       = -lw * 1.8;
 bike.heading = pi; % driving against traffic
-bike.speed   = 4.0;
+bike.speed   = 3.5;
 
 % ---------------------------------------------------------------------------
 % Simulation settings
 % ---------------------------------------------------------------------------
 dt     = 0.033;
-t_end  = 22.0;
+t_end  = 25.0;
 goal   = [road_len_m - 20, lw/2];
 tol    = 5.0;
 wb     = 2.70;
-max_st = deg2rad(35);
 
 % ---------------------------------------------------------------------------
 % Visualization Setup
@@ -112,7 +111,7 @@ h_suv   = plot(ax, suv.x, suv.y, 'd', 'MarkerSize', 14, 'MarkerFaceColor', [0.3 
 h_bike  = plot(ax, bike.x, bike.y, '^', 'MarkerSize', 10, 'MarkerFaceColor', [1.0 0.2 0.2], 'MarkerEdgeColor','w');
 h_traj  = plot(ax, ego.x, ego.y, '--', 'Color', [0.4 0.9 0.4], 'LineWidth', 1.2);
 
-text(ax, truck.x-5, truck.y-2, 'TRUCK (Heavy)', 'Color', [1 0.7 0.2], 'FontSize', 8);
+text(ax, truck.x-5, truck.y-2, 'TRUCK (Merging)', 'Color', [1 0.7 0.2], 'FontSize', 8);
 text(ax, suv.x-5, suv.y+2, 'SUV (Fast)', 'Color', [0.5 0.8 1.0], 'FontSize', 8);
 
 h_status = text(ax, 0.02, 0.94, '', 'Units', 'normalized', 'Color', 'w', ...
@@ -126,6 +125,7 @@ arrived = false;
 traj_x = ego.x;
 traj_y = ego.y;
 event_log = {};
+last_decision = '';
 
 while t < t_end && ishandle(fig)
     dist_to_goal = norm([ego.x, ego.y] - goal);
@@ -135,10 +135,9 @@ while t < t_end && ishandle(fig)
     end
 
     % 1. Update Actors
-    % Truck drifts into main left lane abruptly around t=3.5s
-    if t > 3.5 && truck.x < 170
-        truck.merging = true;
-        truck.y = min(lw/2, truck.y + 0.45 * dt); % lateral cut-in
+    % Truck merges into left lane between x=60 and x=110
+    if truck.y < (lw/2)
+        truck.y = min(lw/2, truck.y + 1.2 * dt);
     end
     truck.x = truck.x + truck.speed * dt;
 
@@ -146,32 +145,45 @@ while t < t_end && ishandle(fig)
     bike.x = bike.x - bike.speed * dt;
 
     % 2. Perception & Decision
-    d_truck = norm([truck.x - ego.x, truck.y - ego.y]);
-    in_path_truck = (truck.x > ego.x) && (abs(truck.y - ego.y) < 1.8);
+    dx_truck = truck.x - ego.x;
+    dy_truck = truck.y - ego.y;
+    d_truck  = norm([dx_truck, dy_truck]);
 
     decision = 'PROCEED';
     v_cmd = ego.target_speed;
     steer = 0;
 
-    if in_path_truck && d_truck < 18.0
+    % Longitudinal and Lateral Control Logic
+    if dx_truck > 0 && dx_truck < 20.0 && abs(dy_truck) < 2.2
         decision = 'BRAKE';
-        v_cmd = truck.speed * 0.7;
-        event_log{end+1} = sprintf('t=%.1fs: BRAKE — Truck cut-in gap: %.1fm', t, d_truck); %#ok<AGROW>
-        % If overtaking lane is clear of SUV, initiate courteous lane change
-        if (ego.x - suv.x > 25.0) || (suv.x - ego.x > 35.0)
-            steer = deg2rad(6.0); % change to right lane to pass
+        v_cmd = truck.speed * 0.8;
+        msg = sprintf('t=%.1fs: BRAKE — Truck cut-in gap: %.1fm', t, d_truck);
+        if ~strcmp(decision, last_decision) || mod(round(t*10), 10) == 0
+            fprintf('  %s\n', msg);
+            event_log{end+1} = msg; %#ok<AGROW>
         end
-    elseif in_path_truck && d_truck < 35.0
+    elseif dx_truck > 0 && dx_truck < 38.0 && abs(dy_truck) < 3.0
         decision = 'CAUTION';
-        v_cmd = truck.speed * 1.1;
-        event_log{end+1} = sprintf('t=%.1fs: CAUTION — Merging truck ahead: %.1fm', t, d_truck); %#ok<AGROW>
-    elseif truck.merging && d_truck < 45.0
+        v_cmd = truck.speed * 1.05;
+        msg = sprintf('t=%.1fs: CAUTION — Merging commercial vehicle %.1fm ahead', t, d_truck);
+        if ~strcmp(decision, last_decision) || mod(round(t*10), 15) == 0
+            fprintf('  %s\n', msg);
+            event_log{end+1} = msg; %#ok<AGROW>
+        end
+    elseif dx_truck > 0 && dx_truck < 55.0 && truck.y < 0
         decision = 'SLOW';
-        v_cmd = ego.target_speed * 0.85;
+        v_cmd = ego.target_speed * 0.8;
+        msg = sprintf('t=%.1fs: SLOW — Merging vehicle on on-ramp (%.1fm)', t, d_truck);
+        if ~strcmp(decision, last_decision)
+            fprintf('  %s\n', msg);
+            event_log{end+1} = msg; %#ok<AGROW>
+        end
     end
 
+    last_decision = decision;
+
     % 3. Ego Dynamics
-    accel = 1.8 * (v_cmd - ego.speed);
+    accel = 2.2 * (v_cmd - ego.speed);
     ego.speed = max(0, ego.speed + accel * dt);
     ego.heading = ego.heading + (ego.speed / wb) * tan(steer) * dt;
     ego.x = ego.x + ego.speed * cos(ego.heading) * dt;
@@ -191,7 +203,7 @@ while t < t_end && ishandle(fig)
     set(h_traj,  'XData', traj_x,  'YData', traj_y);
 
     % Camera follow ego
-    xlim(ax, [ego.x - 30, ego.x + 120]);
+    xlim(ax, [ego.x - 20, ego.x + 90]);
 
     col = scenario_color(decision);
     set(h_status, 'String', sprintf('t=%.1fs | Decision: %s | Ego Speed: %.1f km/h | Truck Gap: %.1fm', ...

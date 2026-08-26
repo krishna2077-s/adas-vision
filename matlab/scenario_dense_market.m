@@ -5,7 +5,7 @@
 % with high density of Vulnerable Road Users (VRUs), street vendors, and narrow navigable space.
 %
 % Elements:
-%   - Narrow street (4.0m drivable space) bounded by market stalls & parked pushcarts
+%   - Narrow street (3.5m drivable space) bounded by market stalls & parked pushcarts
 %   - Multiple pedestrians crossing without formal crosswalks
 %   - Street vendor pushcart (thela) partially occupying road
 %   - Oncoming scooter filtering between pedestrians
@@ -31,25 +31,25 @@ ego.target_speed = 3.88; % ~14 km/h
 
 % Static Pushcart (Thela) parked at x=35m, y=-1.2m
 thela.x     = 35.0;
-thela.y     = -1.4;
+thela.y     = -1.3;
 thela.l     = 2.2;
 thela.w     = 1.2;
 
 % Pedestrian 1: wandering across from left to right at x=20m
-ped1.x = 22.0; ped1.y = 2.5; ped1.vx = 0.2; ped1.vy = -0.7;
+ped1.x = 22.0; ped1.y = 2.5; ped1.vx = 0.15; ped1.vy = -0.65;
 
 % Pedestrian 2: child/shopper darting from right behind pushcart at x=40m
-ped2.x = 42.0; ped2.y = -2.8; ped2.vx = -0.3; ped2.vy = 0.9;
+ped2.x = 42.0; ped2.y = -2.8; ped2.vx = -0.25; ped2.vy = 0.85;
 
 % Pedestrian 3: walking along road edge at x=65m
-ped3.x = 65.0; ped3.y = 1.6; ped3.vx = 0.8; ped3.vy = 0.05;
+ped3.x = 65.0; ped3.y = 1.4; ped3.vx = 0.8; ped3.vy = 0.05;
 
 % Oncoming Scooter: weaving through at x=90m
-scooter.x = 90.0; scooter.y = 0.6; scooter.speed = 4.5; scooter.heading = pi;
+scooter.x = 90.0; scooter.y = 0.5; scooter.speed = 4.2; scooter.heading = pi;
 
 % Simulation params
 dt     = 0.033;
-t_end  = 30.0;
+t_end  = 32.0;
 goal   = [street_len - 10, 0];
 tol    = 4.0;
 wb     = 2.70;
@@ -113,6 +113,7 @@ arrived = false;
 traj_x = ego.x;
 traj_y = ego.y;
 event_log = {};
+last_decision = '';
 
 while t < t_end && ishandle(fig)
     dist_to_goal = norm([ego.x, ego.y] - goal);
@@ -125,8 +126,8 @@ while t < t_end && ishandle(fig)
     ped1.x = ped1.x + ped1.vx * dt;
     ped1.y = ped1.y + ped1.vy * dt;
 
-    % Darting pedestrian starts moving at t=3.0s
-    if t > 3.0 && ped2.y < 1.0
+    % Darting pedestrian starts moving at t=2.0s
+    if t > 2.0 && ped2.y < 1.2
         ped2.x = ped2.x + ped2.vx * dt;
         ped2.y = ped2.y + ped2.vy * dt;
     end
@@ -138,7 +139,7 @@ while t < t_end && ishandle(fig)
 
     % 2. Perception & Closest Obstacle Analysis
     peds = [ped1.x, ped1.y; ped2.x, ped2.y; ped3.x, ped3.y; thela.x, thela.y; scooter.x, scooter.y];
-    labels = {'Pedestrian (crossing)', 'Child (darting)', 'Shopper (edge)', 'Parked Pushcart', 'Oncoming Scooter'};
+    labels = {'Pedestrian (crossing)', 'Shopper (darting)', 'Pedestrian (edge)', 'Parked Pushcart', 'Oncoming Scooter'};
 
     min_d = Inf;
     crit_label = '';
@@ -153,8 +154,8 @@ while t < t_end && ishandle(fig)
                 min_d = dist;
                 crit_label = labels{k};
                 % Nudge steering away from lateral obstacles
-                if abs(dy) < 1.6 && dx > 0
-                    steer = -sign(dy) * deg2rad(7.0); % steer opposite side
+                if abs(dy) < 1.8 && dx > 0
+                    steer = -sign(dy) * deg2rad(6.5);
                 end
             end
         end
@@ -167,15 +168,30 @@ while t < t_end && ishandle(fig)
     if min_d < 4.5
         decision = 'EMERGENCY_STOP';
         v_cmd = 0.0;
-        event_log{end+1} = sprintf('t=%.1fs: E-STOP — %s at %.1fm', t, crit_label, min_d); %#ok<AGROW>
-    elseif min_d < 9.0
+        msg = sprintf('t=%.1fs: E-STOP — %s at %.1fm', t, crit_label, min_d);
+        if ~strcmp(decision, last_decision) || mod(round(t*10), 10) == 0
+            fprintf('  %s\n', msg);
+            event_log{end+1} = msg; %#ok<AGROW>
+        end
+    elseif min_d < 9.5
         decision = 'BRAKE';
-        v_cmd = 0.8;
-        event_log{end+1} = sprintf('t=%.1fs: BRAKE — %s in path (%.1fm)', t, crit_label, min_d); %#ok<AGROW>
-    elseif min_d < 16.0
+        v_cmd = 0.6;
+        msg = sprintf('t=%.1fs: BRAKE — %s in path (%.1fm)', t, crit_label, min_d);
+        if ~strcmp(decision, last_decision) || mod(round(t*10), 15) == 0
+            fprintf('  %s\n', msg);
+            event_log{end+1} = msg; %#ok<AGROW>
+        end
+    elseif min_d < 18.0
         decision = 'CAUTION';
-        v_cmd = ego.target_speed * 0.6;
+        v_cmd = ego.target_speed * 0.65;
+        msg = sprintf('t=%.1fs: CAUTION — %s ahead (%.1fm)', t, crit_label, min_d);
+        if ~strcmp(decision, last_decision)
+            fprintf('  %s\n', msg);
+            event_log{end+1} = msg; %#ok<AGROW>
+        end
     end
+
+    last_decision = decision;
 
     % 4. Ego Kinematics
     accel = 2.0 * (v_cmd - ego.speed);
