@@ -51,17 +51,18 @@ end
 % ---------------------------------------------------------------------------
 % Consolidated Comparative Table
 % ---------------------------------------------------------------------------
-fprintf('\n\n========================================================================================================\n');
-fprintf('                                     BENCHMARK SUMMARY RESULTS TABLE                                     \n');
-fprintf('========================================================================================================\n');
-fprintf('%-22s | %-10s | %-12s | %-12s | %-10s | %-10s | %-10s\n', ...
-        'Scenario', 'Time (s)', 'Distance (m)', 'Smoothness', 'Collisions', 'Replan(ms)', 'Status');
-fprintf('--------------------------------------------------------------------------------------------------------\n');
+fprintf('\n\n====================================================================================================================\n');
+fprintf('                                          BENCHMARK SUMMARY RESULTS TABLE                                           \n');
+fprintf('====================================================================================================================\n');
+fprintf('%-20s | %-9s | %-12s | %-12s | %-14s | %-10s | %-10s | %-8s\n', ...
+        'Scenario', 'Time (s)', 'Distance (m)', 'Smoothness', 'Min Clearance', 'Collisions', 'Replan(ms)', 'Status');
+fprintf('--------------------------------------------------------------------------------------------------------------------\n');
 
 names       = {};
 durations   = [];
 distances   = [];
 smoothnesses= [];
+clearances  = [];
 collisions  = [];
 replans     = [];
 completed   = {};
@@ -76,20 +77,21 @@ for i = 1:n_scen
             stat_str = 'TIMEOUT';
         end
 
-        fprintf('%-22s | %10.1f | %12.1f | %12.4f | %10d | %10.2f | %-10s\n', ...
+        fprintf('%-20s | %9.1f | %12.1f | %12.4f | %12.2f m | %10d | %10.2f | %-8s\n', ...
                 m.scenario, m.duration_s, m.distance_m, m.path_smoothness, ...
-                m.collisions, m.mean_replan_ms, stat_str);
+                m.min_clearance_m, m.collisions, m.mean_replan_ms, stat_str);
 
         names{end+1}        = m.scenario; %#ok<AGROW>
         durations(end+1)    = m.duration_s; %#ok<AGROW>
         distances(end+1)    = m.distance_m; %#ok<AGROW>
         smoothnesses(end+1) = m.path_smoothness; %#ok<AGROW>
+        clearances(end+1)   = m.min_clearance_m; %#ok<AGROW>
         collisions(end+1)   = m.collisions; %#ok<AGROW>
         replans(end+1)      = m.mean_replan_ms; %#ok<AGROW>
         completed{end+1}    = stat_str; %#ok<AGROW>
     end
 end
-fprintf('========================================================================================================\n\n');
+fprintf('====================================================================================================================\n\n');
 
 % ---------------------------------------------------------------------------
 % Export Consolidated CSV

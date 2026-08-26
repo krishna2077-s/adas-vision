@@ -2,239 +2,89 @@
 % ADAS Vision — Driving Scenario 3: Indian Highway Merge
 %
 % Tests vehicle navigation during highway merging with high speed differentials
-% and unpredictable commercial vehicle behavior common on Indian highways.
-%
-% Elements:
-%   - 2-lane dual carriageway (70 km/h design speed) + 1 on-ramp merging lane
-%   - Ego vehicle: cruising in left lane (speed: ~50 km/h)
-%   - Slow overloaded commercial truck (Tata 1613 style): merging at 25 km/h cutting into lane
-%   - Fast SUV in overtaking lane (85 km/h)
-%   - Two-wheeler riding on the shoulder against traffic
+% and unpredictable commercial vehicle cut-in behavior.
+% Uses the unified closed-loop adaptive pipeline:
+%   build_occupancy_grid -> predict_trajectories -> replan_trigger -> plan_path -> decision_with_ratchet
 %
 % Usage:
 %   >> scenario_highway_merge
 
-fprintf('=== Scenario 3: Highway Merge ===\n');
+cfg = struct();
+cfg.name  = 'highway_merge';
+cfg.title = 'Scenario 3 — Highway Merge';
+cfg.dt    = 0.033;
+cfg.max_time = 25.0;
+cfg.lane_half_width = 7.5; % 2-lane dual carriageway
 
-% ---------------------------------------------------------------------------
-% Road geometry
-% ---------------------------------------------------------------------------
-road_len_m  = 300.0;
-lw          = 3.75;  % standard Indian highway lane width (m)
-merge_start = 30.0;
-merge_end   = 160.0;
+cfg.ego_init.x       = 0.0;
+cfg.ego_init.y       = -1.875; % Left cruising lane
+cfg.ego_init.heading = 0.0;
+cfg.ego_init.speed   = 13.88;  % 50 km/h
 
-% ---------------------------------------------------------------------------
+cfg.goal = [260.0, -1.875, 0.0];
+cfg.goal_tol = 5.0;
+
 % Actors
-% ---------------------------------------------------------------------------
-% Ego vehicle (starts on main highway left lane, cruising)
-ego.x       = 0.0;
-ego.y       = lw / 2;
-ego.heading = 0.0;
-ego.speed   = 13.88; % ~50 km/h
-ego.target_speed = 15.0; % ~54 km/h
+% 1. Heavy Commercial Truck (Tata 1613 style, merges from on-ramp)
+truck.id    = 'truck';
+truck.class = 'truck';
+truck.x     = 45.0;
+truck.y     = -6.5;
+truck.vx    = 6.94; % 25 km/h
+truck.vy    = 1.1;  % Cut-in lateral merge speed
+truck.width = 2.5;
+truck.length= 8.5;
 
-% Slow overloaded commercial truck in merge lane
-truck.x       = 55.0;
-truck.y       = -lw * 1.1;
-truck.heading = 0.0;
-truck.speed   = 6.94; % 25 km/h
-truck.length  = 8.5;
-truck.width   = 2.5;
-truck.merging = true;
+% 2. Fast Overtaking SUV in right lane (y = +1.875)
+suv.id    = 'suv';
+suv.class = 'car';
+suv.x     = -40.0;
+suv.y     = 1.875;
+suv.vx    = 22.2; % 80 km/h
+suv.vy    = 0.0;
+suv.width = 1.9;
+suv.length= 4.8;
 
-% Fast overtaking SUV in right lane (y = 3*lw/2)
-suv.x       = -50.0;
-suv.y       = lw * 1.5;
-suv.heading = 0.0;
-suv.speed   = 22.2; % 80 km/h
-suv.length  = 4.8;
-suv.width   = 1.9;
+% 3. Wrong-way two-wheeler on left shoulder
+bike.id    = 'bike';
+bike.class = 'motorcycle';
+bike.x     = 180.0;
+bike.y     = -8.5;
+bike.vx    = -4.0;
+bike.vy    = 0.0;
+bike.width = 0.8;
+bike.length= 1.8;
 
-% Errant two-wheeler on left shoulder
-bike.x       = 160.0;
-bike.y       = -lw * 1.8;
-bike.heading = pi; % driving against traffic
-bike.speed   = 3.5;
+cfg.actors = {truck, suv, bike};
+cfg.update_actor = @(act, t, dt, ego) update_highway_actors(act, t, dt);
+cfg.draw_background = @(ax) draw_highway_background(ax, cfg.lane_half_width);
 
-% ---------------------------------------------------------------------------
-% Simulation settings
-% ---------------------------------------------------------------------------
-dt     = 0.033;
-t_end  = 25.0;
-goal   = [road_len_m - 20, lw/2];
-tol    = 5.0;
-wb     = 2.70;
+adaptive_scenario_loop(cfg);
 
 % ---------------------------------------------------------------------------
-% Visualization Setup
+% Helper Functions
 % ---------------------------------------------------------------------------
-fig = figure('Name','Scenario 3 — Indian Highway Merge','NumberTitle','off',...
-             'Color',[0.06 0.06 0.10],'Position',[60 120 1000 480]);
-ax  = axes('Parent',fig,'Color',[0.12 0.12 0.16],...
-           'XColor','w','YColor','w','GridColor',[0.25 0.25 0.35],'GridAlpha',0.4);
-hold(ax,'on'); grid(ax,'on');
-axis(ax,'equal');
-xlim(ax, [-10, road_len_m]);
-ylim(ax, [-lw*3, lw*3]);
-xlabel(ax, 'Longitudinal Position (m)', 'Color','w');
-ylabel(ax, 'Lateral Position (m)', 'Color','w');
-
-% Main Highway Lanes (Dark asphalt)
-fill(ax, [0 road_len_m road_len_m 0], [0 0 2*lw 2*lw], [0.18 0.18 0.22], 'EdgeColor','none');
-
-% Merge Ramp
-fill(ax, [merge_start merge_end merge_end merge_start], ...
-     [-lw*2 -lw*2 0 0], [0.18 0.18 0.22], 'EdgeColor','none');
-
-% Road markings
-plot(ax, [0 road_len_m], [2*lw 2*lw], 'w-', 'LineWidth', 2); % Outer right
-plot(ax, [0 road_len_m], [0 0], 'w-', 'LineWidth', 1.5);    % Edge line
-plot(ax, [0 road_len_m], [lw lw], 'w--', 'LineWidth', 1.0); % Lane divider
-
-% Merge entry taper & solid line
-plot(ax, [merge_start merge_end], [-lw*2 -lw*2], 'w-', 'LineWidth', 1.5);
-plot(ax, [merge_start merge_end-30], [0 0], 'w--', 'LineWidth', 1.2);
-
-% Shoulder grass
-fill(ax, [0 road_len_m road_len_m 0], [-lw*3 -lw*3 -lw*2 -lw*2], [0.12 0.24 0.10], 'EdgeColor','none');
-fill(ax, [0 road_len_m road_len_m 0], [2*lw 2*lw 2*lw+5 2*lw+5], [0.12 0.24 0.10], 'EdgeColor','none');
-
-% Goal Marker
-plot(ax, goal(1), goal(2), 'p', 'MarkerSize', 18, 'MarkerFaceColor', [1 0.85 0], 'MarkerEdgeColor', 'w');
-text(ax, goal(1)+2, goal(2)+1, 'GOAL', 'Color', [1 0.85 0], 'FontSize', 9);
-
-% Actor Graphics Handles
-h_ego   = plot(ax, ego.x, ego.y, 'o', 'MarkerSize', 14, 'MarkerFaceColor', [0 0.85 0.3], 'MarkerEdgeColor','w', 'LineWidth', 2);
-h_truck = plot(ax, truck.x, truck.y, 's', 'MarkerSize', 20, 'MarkerFaceColor', [0.85 0.45 0.1], 'MarkerEdgeColor','w', 'LineWidth', 2);
-h_suv   = plot(ax, suv.x, suv.y, 'd', 'MarkerSize', 14, 'MarkerFaceColor', [0.3 0.6 1.0], 'MarkerEdgeColor','w');
-h_bike  = plot(ax, bike.x, bike.y, '^', 'MarkerSize', 10, 'MarkerFaceColor', [1.0 0.2 0.2], 'MarkerEdgeColor','w');
-h_traj  = plot(ax, ego.x, ego.y, '--', 'Color', [0.4 0.9 0.4], 'LineWidth', 1.2);
-
-text(ax, truck.x-5, truck.y-2, 'TRUCK (Merging)', 'Color', [1 0.7 0.2], 'FontSize', 8);
-text(ax, suv.x-5, suv.y+2, 'SUV (Fast)', 'Color', [0.5 0.8 1.0], 'FontSize', 8);
-
-h_status = text(ax, 0.02, 0.94, '', 'Units', 'normalized', 'Color', 'w', ...
-                'FontSize', 10, 'VerticalAlignment', 'top', 'FontWeight', 'bold');
-
-% ---------------------------------------------------------------------------
-% Simulation Loop
-% ---------------------------------------------------------------------------
-t = 0;
-arrived = false;
-traj_x = ego.x;
-traj_y = ego.y;
-event_log = {};
-last_decision = '';
-
-while t < t_end && ishandle(fig)
-    dist_to_goal = norm([ego.x, ego.y] - goal);
-    if dist_to_goal < tol
-        arrived = true;
-        break;
-    end
-
-    % 1. Update Actors
-    % Truck merges into left lane between x=60 and x=110
-    if truck.y < (lw/2)
-        truck.y = min(lw/2, truck.y + 1.2 * dt);
-    end
-    truck.x = truck.x + truck.speed * dt;
-
-    suv.x  = suv.x + suv.speed * dt;
-    bike.x = bike.x - bike.speed * dt;
-
-    % 2. Perception & Decision
-    dx_truck = truck.x - ego.x;
-    dy_truck = truck.y - ego.y;
-    d_truck  = norm([dx_truck, dy_truck]);
-
-    decision = 'PROCEED';
-    v_cmd = ego.target_speed;
-    steer = 0;
-
-    % Longitudinal and Lateral Control Logic
-    if dx_truck > 0 && dx_truck < 20.0 && abs(dy_truck) < 2.2
-        decision = 'BRAKE';
-        v_cmd = truck.speed * 0.8;
-        msg = sprintf('t=%.1fs: BRAKE — Truck cut-in gap: %.1fm', t, d_truck);
-        if ~strcmp(decision, last_decision) || mod(round(t*10), 10) == 0
-            fprintf('  %s\n', msg);
-            event_log{end+1} = msg; %#ok<AGROW>
+function act = update_highway_actors(act, t, dt)
+    if strcmp(act.id, 'truck')
+        % Truck merges until reaching center of left lane (y = -1.875)
+        if act.y < -1.875
+            act.y = min(-1.875, act.y + act.vy * dt);
         end
-    elseif dx_truck > 0 && dx_truck < 38.0 && abs(dy_truck) < 3.0
-        decision = 'CAUTION';
-        v_cmd = truck.speed * 1.05;
-        msg = sprintf('t=%.1fs: CAUTION — Merging commercial vehicle %.1fm ahead', t, d_truck);
-        if ~strcmp(decision, last_decision) || mod(round(t*10), 15) == 0
-            fprintf('  %s\n', msg);
-            event_log{end+1} = msg; %#ok<AGROW>
-        end
-    elseif dx_truck > 0 && dx_truck < 55.0 && truck.y < 0
-        decision = 'SLOW';
-        v_cmd = ego.target_speed * 0.8;
-        msg = sprintf('t=%.1fs: SLOW — Merging vehicle on on-ramp (%.1fm)', t, d_truck);
-        if ~strcmp(decision, last_decision)
-            fprintf('  %s\n', msg);
-            event_log{end+1} = msg; %#ok<AGROW>
-        end
+        act.x = act.x + act.vx * dt;
+    else
+        act.x = act.x + act.vx * dt;
+        act.y = act.y + act.vy * dt;
     end
-
-    last_decision = decision;
-
-    % 3. Ego Dynamics
-    accel = 2.2 * (v_cmd - ego.speed);
-    ego.speed = max(0, ego.speed + accel * dt);
-    ego.heading = ego.heading + (ego.speed / wb) * tan(steer) * dt;
-    ego.x = ego.x + ego.speed * cos(ego.heading) * dt;
-    ego.y = ego.y + ego.speed * sin(ego.heading) * dt;
-
-    % Keep on road boundaries
-    ego.y = max(0.5, min(2*lw - 0.5, ego.y));
-
-    traj_x(end+1) = ego.x; %#ok<AGROW>
-    traj_y(end+1) = ego.y; %#ok<AGROW>
-
-    % 4. Graphics Update
-    set(h_ego,   'XData', ego.x,   'YData', ego.y);
-    set(h_truck, 'XData', truck.x, 'YData', truck.y);
-    set(h_suv,   'XData', suv.x,   'YData', suv.y);
-    set(h_bike,  'XData', bike.x,  'YData', bike.y);
-    set(h_traj,  'XData', traj_x,  'YData', traj_y);
-
-    % Camera follow ego
-    xlim(ax, [ego.x - 20, ego.x + 90]);
-
-    col = scenario_color(decision);
-    set(h_status, 'String', sprintf('t=%.1fs | Decision: %s | Ego Speed: %.1f km/h | Truck Gap: %.1fm', ...
-        t, decision, ego.speed*3.6, d_truck), 'Color', col);
-    title(ax, sprintf('Scenario 3 — Highway Merge | %s', decision), 'Color', col, 'FontSize', 12);
-
-    drawnow limitrate;
-    t = t + dt;
 end
 
-fprintf('\n=== Scenario 3 Complete ===\n');
-if arrived
-    fprintf('  Goal reached in %.1f s\n', t);
-else
-    fprintf('  Simulation ended at t=%.1f s\n', t);
-end
-fprintf('  Events logged: %d\n', numel(event_log));
-
-scenario_result.name    = 'highway_merge';
-scenario_result.t_total = t;
-scenario_result.arrived = arrived;
-scenario_result.traj_x  = traj_x;
-scenario_result.traj_y  = traj_y;
-assignin('base', 'scenario_result', scenario_result);
-
-function c = scenario_color(d)
-    switch d
-        case 'PROCEED',  c = [0.2 0.9 0.2];
-        case 'CAUTION',  c = [1.0 0.8 0.0];
-        case 'SLOW',     c = [1.0 0.5 0.0];
-        case 'BRAKE',    c = [1.0 0.2 0.0];
-        otherwise,       c = [0.8 0.8 0.8];
-    end
+function draw_highway_background(ax, lw)
+    fill(ax, [0 280 280 0], [-lw -lw lw lw], [0.18 0.18 0.22], 'EdgeColor', 'none');
+    % Merge Ramp on-ramp taper
+    fill(ax, [30 160 160 30], [-lw-4 -lw-4 -lw -lw], [0.18 0.18 0.22], 'EdgeColor', 'none');
+    % Lane divider
+    plot(ax, [0 280], [0 0], 'w--', 'LineWidth', 1.2);
+    % Shoulders
+    plot(ax, [0 280], [-lw -lw], 'w-', 'LineWidth', 2.0);
+    plot(ax, [0 280], [lw lw], 'w-', 'LineWidth', 2.0);
+    ylim(ax, [-lw-6, lw+4]);
 end
