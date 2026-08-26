@@ -35,6 +35,7 @@ for i = 1:n_scen
     s_func = scenarios{i, 2};
 
     fprintf('\n>>> Running [%d/%d]: %s <<<\n', i, n_scen, s_name);
+    try
         res = s_func();
         pause(0.5);
         if ~isempty(res)
