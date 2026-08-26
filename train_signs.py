@@ -130,6 +130,8 @@ def main():
 
     import torch
     from torch import nn, optim
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    logger.info(f"Using device: {device}")
     if args.threads:
         torch.set_num_threads(args.threads)
 
@@ -156,7 +158,7 @@ def main():
                 f"-> train {len(train_items)} / val {len(val_items)}")
 
     train_ds, val_ds = GTSRBData(train_items), GTSRBData(val_items)
-    model = build_sign_cnn()
+    model = build_sign_cnn().to(device)
     opt = optim.Adam(model.parameters(), lr=args.lr)
     sched = optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
     lossf = nn.CrossEntropyLoss()
@@ -172,7 +174,7 @@ def main():
                 if x is not None:
                     xs.append(x); ys.append(y)
             if xs:
-                yield torch.stack(xs), torch.tensor(ys)
+                yield torch.stack(xs).to(device), torch.tensor(ys).to(device)
 
     best_acc = 0.0
     for ep in range(1, args.epochs + 1):

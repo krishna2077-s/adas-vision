@@ -249,7 +249,7 @@ class LaneDetector:
         cx = self.w / 2
 
         for line in raw_lines:
-            x1, y1, x2, y2 = line[0]
+            x1, y1, x2, y2 = line.flatten()
             dx = x2 - x1
             if dx == 0:
                 continue

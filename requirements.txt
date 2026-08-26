@@ -28,3 +28,9 @@ onnx>=1.15.0
 # PyTorch. IR is produced by export_openvino.py; benchmark with bench_openvino.py.
 openvino>=2025.0
 nncf>=2.9.0
+
+# ── Web UI (web_demo.py) ──────────────────────────────────────────────────────
+gradio>=4.0.0
+
+# ── TensorRT deployment (optional, NVIDIA hardware) ───────────────────────────
+tensorrt>=10.0.0
