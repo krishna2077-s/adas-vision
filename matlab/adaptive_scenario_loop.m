@@ -103,10 +103,11 @@ text(ax, goal(1)+2, goal(2)+1, 'GOAL', 'Color', [1 0.85 0], 'FontSize', 9, 'Font
 % Graphic handles
 path_col = 'c--';
 if is_baseline, path_col = 'm--'; end
-h_path = plot(ax, NaN, NaN, path_col, 'LineWidth', 2.0); % Planned path
-h_pred = plot(ax, NaN, NaN, 'r:', 'LineWidth', 1.5); % Forecast trajectories
-h_traj = plot(ax, ego.x, ego.y, 'g-', 'LineWidth', 1.5); % Driven history
-h_ego  = plot(ax, ego.x, ego.y, 'o', 'MarkerSize', 14, 'MarkerFaceColor', [0 0.85 0.3], 'MarkerEdgeColor', 'w', 'LineWidth', 2);
+h_path  = plot(ax, NaN, NaN, path_col, 'LineWidth', 2.0); % Planned path
+h_pred  = plot(ax, NaN, NaN, 'r:', 'LineWidth', 1.5); % Forecast trajectories
+h_lidar = plot(ax, NaN, NaN, '.', 'Color', [0.2 0.85 1.0], 'MarkerSize', 5); % 3D LiDAR Obstacle Returns
+h_traj  = plot(ax, ego.x, ego.y, 'g-', 'LineWidth', 1.5); % Driven history
+h_ego   = plot(ax, ego.x, ego.y, 'o', 'MarkerSize', 14, 'MarkerFaceColor', [0 0.85 0.3], 'MarkerEdgeColor', 'w', 'LineWidth', 2);
 
 % Actor handles map
 actor_handles = containers.Map();
@@ -229,8 +230,23 @@ while t < max_time && ishandle(fig)
     set(h_pred, 'XData', all_pred_x, 'YData', all_pred_y);
 
     % -----------------------------------------------------------------------
-    % C. Build Dynamic Occupancy Map (build_occupancy_grid.m)
+    % C. 3D LiDAR Simulation & Dynamic Occupancy Map Generation
     % -----------------------------------------------------------------------
+    road_cfg_lidar = struct();
+    if isfield(scen_cfg, 'lane_half_width'), road_cfg_lidar.lane_half_width = scen_cfg.lane_half_width; end
+    
+    try
+        ptCloud = simulate_lidar(ego, actors, road_cfg_lidar);
+        [lidar_dets, obs_pts, ~] = process_lidar_pointcloud(ptCloud);
+        if ~isempty(obs_pts)
+            set(h_lidar, 'XData', obs_pts(:, 1), 'YData', obs_pts(:, 2));
+        else
+            set(h_lidar, 'XData', NaN, 'YData', NaN);
+        end
+    catch
+        obs_pts = [];
+    end
+
     grid_len = 60; grid_width = 30; res = 4;
     map = binaryOccupancyMap(grid_len, grid_width, res);
     map.GridLocationInWorld = [ego.x - 5, ego.y - 15];
@@ -245,11 +261,20 @@ while t < max_time && ishandle(fig)
         setOccupancy(map, [x_span', y_bot'], 1);
     end
 
-    % Stamp current obstacle footprints
-    for k = 1:numel(tracks_struct)
-        tr = tracks_struct(k);
-        [ox, oy] = meshgrid((tr.x - 1.0):0.25:(tr.x + 1.0), (tr.y - 0.8):0.25:(tr.y + 0.8));
-        setOccupancy(map, [ox(:), oy(:)], 1);
+    % Stamp current obstacle footprints (fused from LiDAR + vision tracks)
+    if ~isempty(obs_pts)
+        in_grid = (obs_pts(:, 1) >= (ego.x - 5) & obs_pts(:, 1) <= (ego.x + 55)) & ...
+                  (obs_pts(:, 2) >= (ego.y - 15) & obs_pts(:, 2) <= (ego.y + 15));
+        if any(in_grid)
+            setOccupancy(map, obs_pts(in_grid, 1:2), 1);
+            inflate(map, 0.45); % Safety inflation buffer
+        end
+    else
+        for k = 1:numel(tracks_struct)
+            tr = tracks_struct(k);
+            [ox, oy] = meshgrid((tr.x - 1.2):0.25:(tr.x + 1.2), (tr.y - 0.9):0.25:(tr.y + 0.9));
+            setOccupancy(map, [ox(:), oy(:)], 1);
+        end
     end
 
     % IN ADAPTIVE MODE: Also stamp future predicted footprints (Prediction-Aware Planning)
