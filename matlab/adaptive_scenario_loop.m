@@ -305,6 +305,7 @@ while t < max_time && ishandle(fig)
     hazard_ttc = Inf;
     closing_speed = 0.0;
     critical_label = 'None';
+    proximal_clearance = Inf;
 
     if ~isempty(current_path.x)
         path_pts = [current_path.x, current_path.y];
@@ -316,37 +317,48 @@ while t < max_time && ishandle(fig)
             dist_to_obs = norm([dx, dy]);
 
             % Only evaluate obstacles ahead of ego
-            if dx > 0.4 && dx < 45.0
-                % Compute distance from obstacle to the planned path ahead
-                dists_to_traj = sqrt((path_pts(:, 1) - tr.x).^2 + (path_pts(:, 2) - tr.y).^2);
-                [min_d_traj, closest_idx] = min(dists_to_traj);
+            if dx > -1.0 && dx < 45.0
+                obs_hw = tr.width / 2;
+                corridor_thresh = (veh.width_m / 2) + obs_hw + 0.30;
+                is_opposite_lane = (tr.y > 0.4 && ego.y < 0.1 && tr.vx < -0.5);
                 
-                traj_pt = path_pts(closest_idx, :);
+                % Check distance from ALL predicted points to the planned path
+                % This prevents T-boning crossing obstacles (e.g. crossing cows, cross-traffic)
+                obs_pred_x = [tr.x; all_pred_x((k-1)*8+1 : k*8)];
+                obs_pred_y = [tr.y; all_pred_y((k-1)*8+1 : k*8)];
                 
-                % Must be forward of ego position
-                if traj_pt(1) >= (ego.x - 0.5)
-                    obs_hw = tr.width / 2;
-                    % Dynamic safety corridor width
-                    corridor_thresh = (veh.width_m / 2) + obs_hw + 0.30;
-                    
-                    % Check if oncoming vehicle is in separate lane
-                    is_opposite_lane = (tr.y > 0.4 && ego.y < 0.1 && tr.vx < -0.5);
-
-                    if (min_d_traj < corridor_thresh) && ~is_opposite_lane
-                        in_path_hazard = true;
-                        v_rel = ego.speed - tr.vx * cos(ego.heading);
-                        if v_rel > 0
-                            ttc = dx / max(0.1, v_rel);
-                        else
-                            ttc = 99.0;
+                min_d_traj = Inf;
+                % Find minimum distance between any predicted obstacle point and any path point ahead
+                for p = 1:numel(obs_pred_x)
+                    dists = sqrt((path_pts(:, 1) - obs_pred_x(p)).^2 + (path_pts(:, 2) - obs_pred_y(p)).^2);
+                    [d_min_pt, closest_idx] = min(dists);
+                    traj_pt = path_pts(closest_idx, :);
+                    if traj_pt(1) >= (ego.x - 0.5)
+                        if d_min_pt < min_d_traj
+                            min_d_traj = d_min_pt;
                         end
+                    end
+                end
 
-                        if dist_to_obs < hazard_dist
-                            hazard_dist = dist_to_obs;
-                            hazard_ttc = ttc;
-                            closing_speed = v_rel;
-                            critical_label = tr.class;
-                        end
+                % Track closest distance to ANY obstacle along path (for safe passing speed)
+                if min_d_traj < proximal_clearance
+                    proximal_clearance = min_d_traj;
+                end
+
+                if (min_d_traj < corridor_thresh) && ~is_opposite_lane
+                    in_path_hazard = true;
+                    v_rel = ego.speed - tr.vx * cos(ego.heading);
+                    if v_rel > 0
+                        ttc = dx / max(0.1, v_rel);
+                    else
+                        ttc = 99.0;
+                    end
+
+                    if dist_to_obs < hazard_dist
+                        hazard_dist = dist_to_obs;
+                        hazard_ttc = ttc;
+                        closing_speed = v_rel;
+                        critical_label = tr.class;
                     end
                 end
             end
@@ -362,6 +374,19 @@ while t < max_time && ishandle(fig)
     [committed_level, target_speed_mps, ~, rule_id, raw_history, down_counter, emergency_latch] = ...
         decision_with_ratchet(hazard_dist, hazard_ttc, critical_label, in_path_hazard, closing_speed, ...
                               degraded, lane_offset, prev_committed, raw_history, down_counter, emergency_latch);
+    
+    % Enforce constant, safe passing speeds when squeezing past obstacles
+    % This prevents aggressive "overtaking" acceleration followed by harsh braking.
+    if proximal_clearance < 2.0 && target_speed_mps > 3.5
+        target_speed_mps = 3.5; % ~12 km/h (Creeping speed for tight spaces)
+        if committed_level < 2, committed_level = 2; rule_id = 'PROX_SLOW'; end
+    elseif proximal_clearance < 3.0 && target_speed_mps > 6.0
+        target_speed_mps = 6.0; % ~21 km/h (Cautious passing speed)
+        if committed_level < 1, committed_level = 1; rule_id = 'PROX_CAUTION'; end
+    elseif proximal_clearance < 4.5 && target_speed_mps > 9.0
+        target_speed_mps = 9.0; % ~32 km/h (Moderate passing speed)
+    end
+
     prev_committed = committed_level;
 
     level_names = {'PROCEED', 'CAUTION', 'SLOW', 'BRAKE', 'EMERGENCY_STOP'};

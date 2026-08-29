@@ -30,14 +30,18 @@ function [path_x, path_y, path_yaw, plan_time_ms] = plan_path(occupancy_map, ego
         [occ_r, occ_c] = find(occ_mat > 0.5);
         if ~isempty(occ_r)
             res = occupancy_map.Resolution;
-            % MATLAB binaryOccupancyMap matrix: row corresponds to Y (inverted/offset), col to X
+            % MATLAB binaryOccupancyMap matrix: 
+            % col 1 is X_min (origin(1)), col N is X_max
+            % row 1 is Y_max, row M is Y_min (origin(2))
             origin = occupancy_map.GridLocationInWorld;
+            num_rows = occupancy_map.GridSize(1);
+            
             pts_x = origin(1) + (occ_c - 0.5) / res;
-            pts_y = origin(2) + (occ_r - 0.5) / res;
+            pts_y = origin(2) + (num_rows - occ_r + 0.5) / res;
 
             % Filter to forward region of interest
             fwd = (pts_x >= x0 - 1.0 & pts_x <= x0 + lookahead + 5.0) & ...
-                  (abs(pts_y) <= 3.2); % Within drivable road edges
+                  (abs(pts_y) <= 4.0); % Within drivable road edges
             if any(fwd)
                 obs_pts = [pts_x(fwd), pts_y(fwd)];
             end
