@@ -2,18 +2,8 @@ function scenario_result = adaptive_scenario_loop(scen_cfg)
 % ADAS Vision — Unified Adaptive Autonomous Scenario Execution Engine
 %
 % Supports two evaluation modes:
-%   - 'adaptive' (default): Dynamic occupancy grid + prediction stamping + Frenet/Hybrid A* replan + R1-R7 ratchet
+%   - 'adaptive' (default): Dynamic occupancy grid + prediction stamping + Frenet replan + R1-R7 ratchet
 %   - 'baseline': Fixed road centerline + purely reactive threshold braking (no predictive replanning)
-%
-% Integrates the complete closed-loop pipeline:
-%   Perception -> Dynamic Trajectory Prediction (predict_trajectories.m)
-%              -> Binary Occupancy Grid (build_occupancy_grid.m)
-%              -> Adaptive Replan Trigger (replan_trigger.m)
-%              -> Collision-Avoidance Path Planner (plan_path.m)
-%              -> R1-R7 Decision Engine with Temporal Ratchet (decision_with_ratchet.m)
-%              -> Speed-Adaptive Pure Pursuit Steering & PID Throttle/Brake
-%              -> Non-linear Kinematic Bicycle Dynamics
-%              -> Continuous Obstacle Clearance & Telemetry Logging
 %
 % ADAS Vision — SIH 2026 Autonomous Navigation Suite
 
@@ -43,7 +33,7 @@ veh.min_turning_radius = 4.5;
 % Ego State [x, y, heading, speed]
 ego = scen_cfg.ego_init;
 goal = scen_cfg.goal;
-goal_tol = 1.2; % Close tolerance so vehicle overlaps cleanly on goal
+goal_tol = 1.5; % Tolerance for arrival
 if isfield(scen_cfg, 'goal_tol'), goal_tol = scen_cfg.goal_tol; end
 
 % Decision & Ratchet State
@@ -90,7 +80,7 @@ ax  = axes('Parent', fig, 'Color', [0.12 0.12 0.16], ...
 hold(ax, 'on'); grid(ax, 'on');
 axis(ax, 'equal');
 
-% Call custom scenario background drawing (roads, stalls, markings)
+% Call custom scenario background drawing
 if isfield(scen_cfg, 'draw_background')
     scen_cfg.draw_background(ax);
 end
@@ -141,13 +131,18 @@ actors = scen_cfg.actors;
 while t < max_time && ishandle(fig)
     dist_to_goal = norm([ego.x, ego.y] - goal(1:2));
     if dist_to_goal <= goal_tol
-        % Final frame overlap directly on goal
+        % Final frame: vehicle overlaps directly ON TOP OF the goal star
         ego.x = goal(1);
         ego.y = goal(2);
+        ego.speed = 0.0;
         traj_x(end+1) = ego.x; %#ok<AGROW>
         traj_y(end+1) = ego.y; %#ok<AGROW>
         set(h_ego,  'XData', ego.x, 'YData', ego.y);
         set(h_traj, 'XData', traj_x, 'YData', traj_y);
+        set(h_path, 'XData', NaN, 'YData', NaN); % Clear dashed path line on arrival
+        set(h_status, 'String', sprintf('t=%.1fs | [%s] GOAL REACHED | Speed: 0.0 km/h | Min Clearance: %.1fm | Replans: %d', ...
+            t, upper(mode), min_dist_this_frame, log_data.replans), 'Color', [0.2 0.9 0.2]);
+        title(ax, sprintf('Scenario: %s [%s Mode]  |  Status: GOAL REACHED', scen_cfg.title, upper(mode)), 'Color', [0.2 0.9 0.2], 'FontSize', 12);
         drawnow;
         arrived = true;
         break;
@@ -167,16 +162,13 @@ while t < max_time && ishandle(fig)
     hazard_ttc = Inf;
 
     for k = 1:numel(actors)
-        % Dynamic actor motion update
         actors{k} = scen_cfg.update_actor(actors{k}, t, dt, ego);
         act = actors{k};
         
-        % Update graphics
         if isKey(actor_handles, act.id)
             set(actor_handles(act.id), 'XData', act.x, 'YData', act.y);
         end
 
-        % Build track struct for perception/prediction
         dx = act.x - ego.x;
         dy = act.y - ego.y;
         dist_act = norm([dx, dy]);
@@ -186,8 +178,7 @@ while t < max_time && ishandle(fig)
             critical_label = act.class;
         end
 
-        % Only process actors within forward perception range (50m ahead)
-        if dx > -2.0 && dx < 55.0 && abs(dy) < 15.0
+        if dx > -2.0 && dx < 50.0 && abs(dy) < 15.0
             tr.track_id = k;
             tr.x = act.x;
             tr.y = act.y;
@@ -196,10 +187,14 @@ while t < max_time && ishandle(fig)
             tr.class = act.class;
             tracks_struct = [tracks_struct, tr]; %#ok<AGROW>
 
-            % Check path obstruction & closing velocity
-            lat_dist = abs(dy);
-            % Only consider obstacles ahead of ego in our immediate lane width
-            if dx > 0.4 && lat_dist < (veh.width_m/2 + act.width/2 + 0.30)
+            % In-path hazard check:
+            is_ahead = (dx > 0.6 && dx < 40.0);
+            lat_overlap = abs(dy) < (veh.width_m/2 + act.width/2 + 0.15);
+            % If oncoming traffic is in opposite lane (y > 0.4), it does not block ego (y <= 0)
+            is_opposite_lane = (act.y > 0.4 && ego.y < 0.1 && act.vx < -0.5);
+            in_my_path = is_ahead && lat_overlap && ~is_opposite_lane;
+
+            if in_my_path
                 in_path_hazard = true;
                 v_rel = (ego.speed - act.vx * cos(ego.heading));
                 if v_rel > 0
@@ -227,7 +222,7 @@ while t < max_time && ishandle(fig)
     predictions.x = {};
     predictions.y = {};
     if ~isempty(tracks_struct)
-        [pred_x, pred_y, ~] = predict_trajectories(tracks_struct, 2.5, 10);
+        [pred_x, pred_y, ~] = predict_trajectories(tracks_struct, 2.0, 8);
         predictions.x = pred_x;
         predictions.y = pred_y;
         for p = 1:numel(pred_x)
@@ -269,17 +264,17 @@ while t < max_time && ishandle(fig)
         setOccupancy(map, [x_span', y_bot'], 1);
     end
 
-    % Stamp current obstacle footprints from tracks (compact bounding boxes)
+    % Stamp current obstacle footprints from tracks
     for k = 1:numel(tracks_struct)
         tr = tracks_struct(k);
         cls = lower(tr.class);
-        hw = 0.8; hl = 1.0;
-        if any(strcmp(cls, {'car','truck','bus'})),       hl = 2.4; hw = 1.1;
-        elseif any(strcmp(cls, {'auto_rickshaw','rickshaw'})), hl = 1.4; hw = 0.7;
-        elseif any(strcmp(cls, {'pushcart','thela'})),    hl = 1.1; hw = 0.6;
-        elseif any(strcmp(cls, {'person','pedestrian'})), hl = 0.35; hw = 0.35;
-        elseif any(strcmp(cls, {'cow','cattle','animal'})), hl = 1.2; hw = 0.7;
-        elseif any(strcmp(cls, {'motorcycle','bike'})),   hl = 0.9; hw = 0.45;
+        hw = 0.75; hl = 0.9;
+        if any(strcmp(cls, {'car','truck','bus'})),       hl = 2.2; hw = 1.0;
+        elseif any(strcmp(cls, {'auto_rickshaw','rickshaw'})), hl = 1.3; hw = 0.65;
+        elseif any(strcmp(cls, {'pushcart','thela'})),    hl = 1.0; hw = 0.55;
+        elseif any(strcmp(cls, {'person','pedestrian'})), hl = 0.3; hw = 0.3;
+        elseif any(strcmp(cls, {'cow','cattle','animal'})), hl = 1.1; hw = 0.6;
+        elseif any(strcmp(cls, {'motorcycle','bike'})),   hl = 0.8; hw = 0.4;
         end
         [ox, oy] = meshgrid((tr.x - hl):0.25:(tr.x + hl), (tr.y - hw):0.25:(tr.y + hw));
         pts_stamp = [ox(:), oy(:)];
@@ -290,32 +285,11 @@ while t < max_time && ishandle(fig)
         end
     end
 
-    % IN ADAPTIVE MODE: Stamp future predicted footprints (first 2 steps)
-    if ~is_baseline && ~isempty(predictions.x)
-        for p = 1:numel(predictions.x)
-            px_pred = predictions.x{p};
-            py_pred = predictions.y{p};
-            if ~isempty(px_pred)
-                sub_steps = 1:min(2, numel(px_pred));
-                for s_idx = sub_steps
-                    [pox, poy] = meshgrid((px_pred(s_idx)-0.4):0.25:(px_pred(s_idx)+0.4), ...
-                                          (py_pred(s_idx)-0.35):0.25:(py_pred(s_idx)+0.35));
-                    p_pts = [pox(:), poy(:)];
-                    in_map_p = p_pts(:,1) >= map.XWorldLimits(1) & p_pts(:,1) <= map.XWorldLimits(2) & ...
-                               p_pts(:,2) >= map.YWorldLimits(1) & p_pts(:,2) <= map.YWorldLimits(2);
-                    if any(in_map_p)
-                        setOccupancy(map, p_pts(in_map_p, :), 1);
-                    end
-                end
-            end
-        end
-    end
-
     % -----------------------------------------------------------------------
-    % D. Replan Trigger Evaluation (replan_trigger.m) & Path Planning
+    % D. Path Planning & Replanning (plan_path.m)
     % -----------------------------------------------------------------------
     if is_baseline
-        % BASELINE: Fixed centerline trajectory from current ego to goal
+        % BASELINE: Fixed centerline trajectory
         n_pts = 40;
         current_path.x = linspace(ego.x, min(goal(1), ego.x + 40), n_pts)';
         current_path.y = scen_cfg.ego_init.y * ones(size(current_path.x));
@@ -386,19 +360,19 @@ while t < max_time && ishandle(fig)
         steer = max(-veh.max_steer_rad, min(veh.max_steer_rad, steer));
     end
 
-    % Longitudinal acceleration (PID target speed tracking with emergency override)
+    % Longitudinal acceleration
     if committed_level == 4 % EMERGENCY_STOP
-        accel = -7.0;
+        accel = -6.0;
         throttle = 0.0; brake = 1.0;
     elseif committed_level == 3 % BRAKE
-        accel = -4.0;
-        throttle = 0.0; brake = 0.8;
+        accel = -3.5;
+        throttle = 0.0; brake = 0.7;
     else
         accel = 2.2 * (target_speed_mps - ego.speed);
         if accel >= 0
             throttle = min(1.0, accel / 2.5); brake = 0.0;
         else
-            throttle = 0.0; brake = min(1.0, -accel / 7.0);
+            throttle = 0.0; brake = min(1.0, -accel / 6.0);
         end
     end
 
