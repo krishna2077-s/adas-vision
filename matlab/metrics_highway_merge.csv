@@ -1,18 +1,18 @@
 metric,value,unit
 scenario,highway_merge,
-timestamp,2026-08-30 00:54:23,
-duration_s,30.69,s
-distance_m,254.61,m
-mean_speed_kmh,29.89,km/h
+timestamp,2026-08-30 01:02:37,
+duration_s,31.19,s
+distance_m,258.08,m
+mean_speed_kmh,29.81,km/h
 max_speed_kmh,50.04,km/h
-path_smoothness,0.00002,rad/m
-lateral_rms_m,1.807,m
-min_clearance_m,3.38,m
+path_smoothness,0.00001,rad/m
+lateral_rms_m,1.806,m
+min_clearance_m,3.35,m
 collisions,0,count
-n_replans,688,count
-mean_replan_ms,0.96,ms
-p95_replan_ms,1.92,ms
+n_replans,732,count
+mean_replan_ms,1.09,ms
+p95_replan_ms,2.10,ms
 max_decel_mps2,6.160,m/s2
 idle_fraction,0.000,frac
-proceed_fraction,0.142,frac
+proceed_fraction,0.140,frac
 scenario_completed,1,bool

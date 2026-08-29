@@ -1,9 +1,15 @@
 function scenario_result = adaptive_scenario_loop(scen_cfg)
 % ADAS Vision — Unified Adaptive Autonomous Scenario Execution Engine
 %
-% Supports two evaluation modes:
-%   - 'adaptive' (default): Dynamic occupancy grid + prediction stamping + Frenet replan + R1-R7 ratchet
-%   - 'baseline': Fixed road centerline + purely reactive threshold braking (no predictive replanning)
+% Integrates the complete closed-loop pipeline:
+%   Perception -> Dynamic Trajectory Prediction (predict_trajectories.m)
+%              -> Binary Occupancy Grid (build_occupancy_grid.m)
+%              -> Adaptive Replan Trigger (replan_trigger.m)
+%              -> Frenet / Potential-Field Path Planner (plan_path.m)
+%              -> R1-R7 Decision Engine with Temporal Ratchet (decision_with_ratchet.m)
+%              -> Progressive Ramp-Up Longitudinal Control & Pure Pursuit Steering
+%              -> Non-linear Kinematic Bicycle Dynamics
+%              -> Continuous Obstacle Clearance & Telemetry Logging
 %
 % ADAS Vision — SIH 2026 Autonomous Navigation Suite
 
@@ -33,7 +39,7 @@ veh.min_turning_radius = 4.5;
 % Ego State [x, y, heading, speed]
 ego = scen_cfg.ego_init;
 goal = scen_cfg.goal;
-goal_tol = 1.5; % Tolerance for arrival
+goal_tol = 1.5;
 if isfield(scen_cfg, 'goal_tol'), goal_tol = scen_cfg.goal_tol; end
 
 % Decision & Ratchet State
@@ -80,7 +86,6 @@ ax  = axes('Parent', fig, 'Color', [0.12 0.12 0.16], ...
 hold(ax, 'on'); grid(ax, 'on');
 axis(ax, 'equal');
 
-% Call custom scenario background drawing
 if isfield(scen_cfg, 'draw_background')
     scen_cfg.draw_background(ax);
 end
@@ -92,10 +97,10 @@ text(ax, goal(1)+1.5, goal(2)+0.8, 'GOAL', 'Color', [1 0.85 0], 'FontSize', 9, '
 % Graphic handles
 path_col = 'c--';
 if is_baseline, path_col = 'm--'; end
-h_path  = plot(ax, NaN, NaN, path_col, 'LineWidth', 2.0); % Planned path
-h_pred  = plot(ax, NaN, NaN, 'r:', 'LineWidth', 1.5); % Forecast trajectories
-h_lidar = plot(ax, NaN, NaN, '.', 'Color', [0.2 0.85 1.0], 'MarkerSize', 5); % 3D LiDAR Obstacle Returns
-h_traj  = plot(ax, ego.x, ego.y, 'g-', 'LineWidth', 1.5); % Driven history
+h_path  = plot(ax, NaN, NaN, path_col, 'LineWidth', 2.0);
+h_pred  = plot(ax, NaN, NaN, 'r:', 'LineWidth', 1.5);
+h_lidar = plot(ax, NaN, NaN, '.', 'Color', [0.2 0.85 1.0], 'MarkerSize', 5);
+h_traj  = plot(ax, ego.x, ego.y, 'g-', 'LineWidth', 1.5);
 h_ego   = plot(ax, ego.x, ego.y, 'o', 'MarkerSize', 10, 'MarkerFaceColor', [0 0.85 0.3], 'MarkerEdgeColor', 'w', 'LineWidth', 1.5);
 
 % Actor handles map
@@ -109,7 +114,7 @@ for k = 1:numel(scen_cfg.actors)
     elseif strcmpi(act.class, 'cow'), col = [0.6 0.4 0.2]; marker = 's'; msize = 12;
     elseif strcmpi(act.class, 'auto_rickshaw') || strcmpi(act.class, 'rickshaw'), col = [0.9 0.8 0.1]; marker = 'd'; msize = 10;
     elseif strcmpi(act.class, 'pushcart') || strcmpi(act.class, 'thela'), col = [0.7 0.5 0.3]; marker = 's'; msize = 11;
-    elseif strcmpi(act.class, 'motorcycle'), col = [0.2 0.7 1.0]; marker = '^'; msize = 8;
+    elseif strcmpi(act.class, 'motorcycle') || strcmpi(act.class, 'bicycle'), col = [0.2 0.7 1.0]; marker = '^'; msize = 8;
     elseif strcmpi(act.class, 'truck'), col = [0.9 0.5 0.1]; marker = 's'; msize = 14;
     end
     h_act = plot(ax, act.x, act.y, marker, 'MarkerSize', msize, 'MarkerFaceColor', col, 'MarkerEdgeColor', 'w', 'LineWidth', 1.5);
@@ -139,7 +144,7 @@ while t < max_time && ishandle(fig)
         traj_y(end+1) = ego.y; %#ok<AGROW>
         set(h_ego,  'XData', ego.x, 'YData', ego.y);
         set(h_traj, 'XData', traj_x, 'YData', traj_y);
-        set(h_path, 'XData', NaN, 'YData', NaN); % Clear dashed path line on arrival
+        set(h_path, 'XData', NaN, 'YData', NaN);
         set(h_status, 'String', sprintf('t=%.1fs | [%s] GOAL REACHED | Speed: 0.0 km/h | Min Clearance: %.1fm | Replans: %d', ...
             t, upper(mode), min_dist_this_frame, log_data.replans), 'Color', [0.2 0.9 0.2]);
         title(ax, sprintf('Scenario: %s [%s Mode]  |  Status: GOAL REACHED', scen_cfg.title, upper(mode)), 'Color', [0.2 0.9 0.2], 'FontSize', 12);
@@ -155,11 +160,6 @@ while t < max_time && ishandle(fig)
     all_pred_x = [];
     all_pred_y = [];
     min_dist_this_frame = Inf;
-    critical_label = 'None';
-    in_path_hazard = false;
-    closing_speed = 0.0;
-    hazard_dist = Inf;
-    hazard_ttc = Inf;
 
     for k = 1:numel(actors)
         actors{k} = scen_cfg.update_actor(actors{k}, t, dt, ego);
@@ -175,7 +175,6 @@ while t < max_time && ishandle(fig)
         
         if dist_act < min_dist_this_frame
             min_dist_this_frame = dist_act;
-            critical_label = act.class;
         end
 
         if dx > -2.0 && dx < 50.0 && abs(dy) < 15.0
@@ -185,33 +184,15 @@ while t < max_time && ishandle(fig)
             tr.vx = act.vx;
             tr.vy = act.vy;
             tr.class = act.class;
+            tr.width = 1.0;
+            tr.length = 2.0;
+            if isfield(act, 'width'), tr.width = act.width; end
+            if isfield(act, 'length'), tr.length = act.length; end
             tracks_struct = [tracks_struct, tr]; %#ok<AGROW>
-
-            % In-path hazard check:
-            is_ahead = (dx > 0.6 && dx < 40.0);
-            lat_overlap = abs(dy) < (veh.width_m/2 + act.width/2 + 0.15);
-            % If oncoming traffic is in opposite lane (y > 0.4), it does not block ego (y <= 0)
-            is_opposite_lane = (act.y > 0.4 && ego.y < 0.1 && act.vx < -0.5);
-            in_my_path = is_ahead && lat_overlap && ~is_opposite_lane;
-
-            if in_my_path
-                in_path_hazard = true;
-                v_rel = (ego.speed - act.vx * cos(ego.heading));
-                if v_rel > 0
-                    ttc = dx / max(0.1, v_rel);
-                else
-                    ttc = 99.0;
-                end
-                if dist_act < hazard_dist
-                    hazard_dist = dist_act;
-                    hazard_ttc = ttc;
-                    closing_speed = v_rel;
-                end
-            end
         end
     end
 
-    % Check collision: only count if vehicle is moving and contacts an obstacle
+    % Check physical collision: only count if vehicle is moving and contacts an obstacle
     if min_dist_this_frame < 0.6 && ego.speed > 0.4
         log_data.collisions = log_data.collisions + 1;
     end
@@ -273,8 +254,8 @@ while t < max_time && ishandle(fig)
         elseif any(strcmp(cls, {'auto_rickshaw','rickshaw'})), hl = 1.3; hw = 0.65;
         elseif any(strcmp(cls, {'pushcart','thela'})),    hl = 1.0; hw = 0.55;
         elseif any(strcmp(cls, {'person','pedestrian'})), hl = 0.3; hw = 0.3;
-        elseif any(strcmp(cls, {'cow','cattle','animal'})), hl = 1.1; hw = 0.6;
-        elseif any(strcmp(cls, {'motorcycle','bike'})),   hl = 0.8; hw = 0.4;
+        elseif any(strcmp(cls, {'cow','cattle','animal'})), hl = 1.2; hw = 0.7;
+        elseif any(strcmp(cls, {'motorcycle','bike','bicycle'})), hl = 0.8; hw = 0.4;
         end
         [ox, oy] = meshgrid((tr.x - hl):0.25:(tr.x + hl), (tr.y - hw):0.25:(tr.y + hw));
         pts_stamp = [ox(:), oy(:)];
@@ -289,14 +270,12 @@ while t < max_time && ishandle(fig)
     % D. Path Planning & Replanning (plan_path.m)
     % -----------------------------------------------------------------------
     if is_baseline
-        % BASELINE: Fixed centerline trajectory
         n_pts = 40;
         current_path.x = linspace(ego.x, min(goal(1), ego.x + 40), n_pts)';
         current_path.y = scen_cfg.ego_init.y * ones(size(current_path.x));
         current_path.yaw = zeros(size(current_path.x));
         set(h_path, 'XData', current_path.x, 'YData', current_path.y);
     else
-        % ADAPTIVE: Real-time Replanning on Dynamic Occupancy Map
         time_since_replan_ms = toc(last_replan_tic) * 1000;
         [need_replan, ~] = replan_trigger(current_path, predictions, time_since_replan_ms, map);
 
@@ -319,7 +298,63 @@ while t < max_time && ishandle(fig)
     end
 
     % -----------------------------------------------------------------------
-    % E. Decision Engine with Temporal Ratchet (decision_with_ratchet.m)
+    % E. Trajectory-Aligned Hazard Evaluation
+    % -----------------------------------------------------------------------
+    in_path_hazard = false;
+    hazard_dist = Inf;
+    hazard_ttc = Inf;
+    closing_speed = 0.0;
+    critical_label = 'None';
+
+    if ~isempty(current_path.x)
+        path_pts = [current_path.x, current_path.y];
+
+        for k = 1:numel(tracks_struct)
+            tr = tracks_struct(k);
+            dx = tr.x - ego.x;
+            dy = tr.y - ego.y;
+            dist_to_obs = norm([dx, dy]);
+
+            % Only evaluate obstacles ahead of ego
+            if dx > 0.4 && dx < 45.0
+                % Compute distance from obstacle to the planned path ahead
+                dists_to_traj = sqrt((path_pts(:, 1) - tr.x).^2 + (path_pts(:, 2) - tr.y).^2);
+                [min_d_traj, closest_idx] = min(dists_to_traj);
+                
+                traj_pt = path_pts(closest_idx, :);
+                
+                % Must be forward of ego position
+                if traj_pt(1) >= (ego.x - 0.5)
+                    obs_hw = tr.width / 2;
+                    % Dynamic safety corridor width
+                    corridor_thresh = (veh.width_m / 2) + obs_hw + 0.30;
+                    
+                    % Check if oncoming vehicle is in separate lane
+                    is_opposite_lane = (tr.y > 0.4 && ego.y < 0.1 && tr.vx < -0.5);
+
+                    if (min_d_traj < corridor_thresh) && ~is_opposite_lane
+                        in_path_hazard = true;
+                        v_rel = ego.speed - tr.vx * cos(ego.heading);
+                        if v_rel > 0
+                            ttc = dx / max(0.1, v_rel);
+                        else
+                            ttc = 99.0;
+                        end
+
+                        if dist_to_obs < hazard_dist
+                            hazard_dist = dist_to_obs;
+                            hazard_ttc = ttc;
+                            closing_speed = v_rel;
+                            critical_label = tr.class;
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    % -----------------------------------------------------------------------
+    % F. Decision Engine with Temporal Ratchet (decision_with_ratchet.m)
     % -----------------------------------------------------------------------
     lane_offset = ego.y;
     degraded = false;
@@ -340,7 +375,7 @@ while t < max_time && ishandle(fig)
     end
 
     % -----------------------------------------------------------------------
-    % F. Speed-Adaptive Pure Pursuit Steering & PID Throttle/Brake
+    % G. Speed-Adaptive Pure Pursuit Steering & Progressive Acceleration
     % -----------------------------------------------------------------------
     la = max(3.0, min(12.0, 0.40 * ego.speed + 3.0));
     steer = 0.0;
@@ -360,24 +395,30 @@ while t < max_time && ishandle(fig)
         steer = max(-veh.max_steer_rad, min(veh.max_steer_rad, steer));
     end
 
-    % Longitudinal acceleration
+    % Progressive Ramp-Up Longitudinal Control
     if committed_level == 4 % EMERGENCY_STOP
-        accel = -6.0;
+        accel = -6.5;
         throttle = 0.0; brake = 1.0;
     elseif committed_level == 3 % BRAKE
         accel = -3.5;
         throttle = 0.0; brake = 0.7;
     else
-        accel = 2.2 * (target_speed_mps - ego.speed);
+        % Smooth ramp-up from stop (start gently, then accelerate to cruising speed)
+        if ego.speed < 2.5
+            max_accel = 1.2; % Gentle launch
+        else
+            max_accel = 2.4; % Normal acceleration
+        end
+        accel = min(max_accel, max(-3.0, 1.8 * (target_speed_mps - ego.speed)));
         if accel >= 0
             throttle = min(1.0, accel / 2.5); brake = 0.0;
         else
-            throttle = 0.0; brake = min(1.0, -accel / 6.0);
+            throttle = 0.0; brake = min(1.0, -accel / 5.0);
         end
     end
 
     % -----------------------------------------------------------------------
-    % G. Vehicle Kinematics Update (Bicycle Model)
+    % H. Vehicle Kinematics Update (Bicycle Model)
     % -----------------------------------------------------------------------
     ego.speed   = max(0.0, ego.speed + accel * dt);
     ego.heading = ego.heading + (ego.speed / veh.wheelbase_m) * tan(steer) * dt;
@@ -388,7 +429,7 @@ while t < max_time && ishandle(fig)
     traj_y(end+1) = ego.y; %#ok<AGROW>
 
     % -----------------------------------------------------------------------
-    % H. Telemetry Logging
+    % I. Telemetry Logging
     % -----------------------------------------------------------------------
     log_data.t(end+1)           = t;
     log_data.x(end+1)           = ego.x;
@@ -403,7 +444,7 @@ while t < max_time && ishandle(fig)
     log_data.min_dist_m(end+1)  = min_dist_this_frame;
 
     % -----------------------------------------------------------------------
-    % I. Graphics Update
+    % J. Graphics Update
     % -----------------------------------------------------------------------
     set(h_ego,  'XData', ego.x, 'YData', ego.y);
     set(h_traj, 'XData', traj_x, 'YData', traj_y);
