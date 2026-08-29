@@ -26,7 +26,7 @@ cfg.ego_init.heading = 0.0;
 cfg.ego_init.speed   = 13.88;  % 50 km/h
 
 cfg.goal = [260.0, -1.875, 0.0];
-cfg.goal_tol = 5.0;
+cfg.goal_tol = 1.5;
 
 % Actors
 % 1. Heavy Commercial Truck (Tata 1613 style, merges from on-ramp)

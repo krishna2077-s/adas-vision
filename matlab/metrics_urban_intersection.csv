@@ -1,18 +1,18 @@
 metric,value,unit
 scenario,urban_intersection,
-timestamp,2026-08-29 22:01:03,
-duration_s,12.28,s
-distance_m,116.20,m
-mean_speed_kmh,34.06,km/h
+timestamp,2026-08-30 00:53:46,
+duration_s,21.65,s
+distance_m,116.12,m
+mean_speed_kmh,19.32,km/h
 max_speed_kmh,50.04,km/h
-path_smoothness,0.00677,rad/m
-lateral_rms_m,0.540,m
-min_clearance_m,2.13,m
+path_smoothness,0.00123,rad/m
+lateral_rms_m,0.550,m
+min_clearance_m,1.18,m
 collisions,0,count
-n_replans,54,count
-mean_replan_ms,0.10,ms
-p95_replan_ms,0.27,ms
-max_decel_mps2,4.000,m/s2
-idle_fraction,0.000,frac
-proceed_fraction,0.434,frac
+n_replans,92,count
+mean_replan_ms,0.90,ms
+p95_replan_ms,1.43,ms
+max_decel_mps2,6.000,m/s2
+idle_fraction,0.455,frac
+proceed_fraction,0.285,frac
 scenario_completed,1,bool
