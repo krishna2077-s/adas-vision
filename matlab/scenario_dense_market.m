@@ -17,7 +17,7 @@ cfg.name  = 'dense_market';
 cfg.title = 'Scenario 4 — Dense Indian Market';
 cfg.mode  = mode;
 cfg.dt    = 0.033;
-cfg.max_time = 30.0;
+cfg.max_time = 55.0;
 cfg.lane_half_width = 3.5; % 3.5m half width (7m total street)
 
 cfg.ego_init.x       = 0.0;

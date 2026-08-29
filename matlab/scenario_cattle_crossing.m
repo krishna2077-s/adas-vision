@@ -17,7 +17,7 @@ cfg.name  = 'cattle_crossing';
 cfg.title = 'Scenario 5 — Cattle Crossing';
 cfg.mode  = mode;
 cfg.dt    = 0.033;
-cfg.max_time = 32.0;
+cfg.max_time = 50.0;
 cfg.lane_half_width = 3.5;
 
 cfg.ego_init.x       = 0.0;
