@@ -8,7 +8,7 @@ Tweak these values if lane detection is missing lines or picking up noise.
 # Camera / video
 # ---------------------------------------------------------------------------
 CAMERA_INDEX = 0          # 0 = built-in webcam, 1 = external USB camera
-TARGET_FPS   = 30
+TARGET_FPS   = 60
 FRAME_WIDTH  = 1280
 FRAME_HEIGHT = 720
 
@@ -133,8 +133,8 @@ ENABLE_LEARNED_ROAD  = True
 #   "deeplabv3" -> DeepLabV3 MobileNetV3   (Phase 7,  ~2.6 fps @768x432, richer ASPP head + augmentation)
 LEARNED_ARCH         = "lraspp"
 LEARNED_MODEL_PATH   = "drivable_idd_lraspp_adv_best.pth"  # Phase 12 adverse fine-tune (train_local.py --adverse): night+fog+rain IoU 0.83->0.91, clean held 0.92; was drivable_idd_lraspp_aug_best.pth
-LEARNED_INPUT_W      = 768     # inference resolution (matches training; lower = faster, less precise)
-LEARNED_INPUT_H      = 432
+LEARNED_INPUT_W      = 640     # inference resolution (lower = faster; torch/CUDA backend resizes dynamically)
+LEARNED_INPUT_H      = 360
 LEARNED_NUM_THREADS  = 0       # 0 = leave torch default; set to physical cores to cap CPU use
 LEARNED_HORIZON_FRAC = 0.35    # ignore rows above this (far field / sky)
 LEARNED_BONNET_FRAC  = 0.93    # ignore the bonnet below this
@@ -165,7 +165,7 @@ LEARNED_FILL_ALPHA   = 0.40
 # Stacked, these turn ~3 fps into real-time on a plain laptop CPU.
 LEARNED_BACKEND      = "openvino"   # "openvino" (Intel iGPU — FASTEST here) | "onnx" (portable) | "torch"
 LEARNED_ONNX_PATH    = "drivable_idd_lraspp_768x432.onnx"  # made by export_onnx.py
-LEARNED_INFER_EVERY  = 3        # run the CNN every Nth frame (1 = every frame)
+LEARNED_INFER_EVERY  = 6        # run the CNN every Nth frame (1 = every frame; road barely moves so 6 is safe)
 
 # ── OpenVINO backend (Phase 8: Intel iGPU + INT8) ────────────────────────────
 # "openvino" runs the model through Intel's runtime, which can use the otherwise
@@ -245,7 +245,7 @@ YOLO_IOU_THRESHOLD  = 0.45   # Non-max-suppression IoU threshold
 # that helps is input resolution YOLO_IMGSZ (640 default; 512 ~= 1.3x, 416 ~= 1.4x
 # but misses small/distant objects — a safety trade-off). Only "torch" can change
 # imgsz at run time; the ONNX/OpenVINO graphs are fixed at their export size.
-YOLO_IMGSZ      = 640             # inference resolution (lower = faster, less range)
+YOLO_IMGSZ      = 512             # inference resolution (512 = ~1.5x faster than 640 with minimal range loss)
 YOLO_BACKEND    = "openvino"      # "openvino" (Intel iGPU — FASTEST here) | "torch" | "onnx"
 YOLO_ONNX_MODEL = "yolov8n.onnx"  # optional; produced by export_yolo_onnx.py
 YOLO_OPENVINO_MODEL = "yolov8n_openvino_model"  # IR dir from export_yolo_openvino.py

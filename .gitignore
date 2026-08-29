@@ -98,3 +98,6 @@ schema_generated.py
 sweep.log
 onnx2tf.log
 Readme-Images.txt
+
+# Simulation output metrics
+metrics_*.csv
