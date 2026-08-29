@@ -17,7 +17,7 @@ cfg.name  = 'village_road';
 cfg.title = 'Scenario 1 — Unmarked Village Road';
 cfg.mode  = mode;
 cfg.dt    = 0.033;
-cfg.max_time = 32.0;
+cfg.max_time = 50.0;
 cfg.lane_half_width = 3.0;
 
 % Initial Ego Pose

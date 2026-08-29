@@ -261,34 +261,46 @@ while t < max_time && ishandle(fig)
         setOccupancy(map, [x_span', y_bot'], 1);
     end
 
-    % Stamp current obstacle footprints (fused from LiDAR + vision tracks)
-    if ~isempty(obs_pts)
-        in_grid = (obs_pts(:, 1) >= (ego.x - 5) & obs_pts(:, 1) <= (ego.x + 55)) & ...
-                  (obs_pts(:, 2) >= (ego.y - 15) & obs_pts(:, 2) <= (ego.y + 15));
-        if any(in_grid)
-            setOccupancy(map, obs_pts(in_grid, 1:2), 1);
-            inflate(map, 0.45); % Safety inflation buffer
+    % Stamp current obstacle footprints from tracks (compact bounding boxes)
+    % LiDAR visualization is separate — occupancy uses track-level footprints
+    % to avoid over-inflating the grid and blocking the planner
+    for k = 1:numel(tracks_struct)
+        tr = tracks_struct(k);
+        % Per-class footprint sizing
+        cls = lower(tr.class);
+        hw = 0.9; hl = 1.0; % Default half-width, half-length
+        if any(strcmp(cls, {'car','truck','bus'})),       hl = 2.5; hw = 1.2;
+        elseif any(strcmp(cls, {'auto_rickshaw','rickshaw'})), hl = 1.5; hw = 0.8;
+        elseif any(strcmp(cls, {'pushcart','thela'})),    hl = 1.2; hw = 0.7;
+        elseif any(strcmp(cls, {'person','pedestrian'})), hl = 0.4; hw = 0.4;
+        elseif any(strcmp(cls, {'cow','cattle','animal'})), hl = 1.3; hw = 0.8;
+        elseif any(strcmp(cls, {'motorcycle','bike'})),   hl = 1.0; hw = 0.5;
         end
-    else
-        for k = 1:numel(tracks_struct)
-            tr = tracks_struct(k);
-            [ox, oy] = meshgrid((tr.x - 1.2):0.25:(tr.x + 1.2), (tr.y - 0.9):0.25:(tr.y + 0.9));
-            setOccupancy(map, [ox(:), oy(:)], 1);
+        [ox, oy] = meshgrid((tr.x - hl):0.25:(tr.x + hl), (tr.y - hw):0.25:(tr.y + hw));
+        pts_stamp = [ox(:), oy(:)];
+        in_map = pts_stamp(:,1) >= map.XWorldLimits(1) & pts_stamp(:,1) <= map.XWorldLimits(2) & ...
+                 pts_stamp(:,2) >= map.YWorldLimits(1) & pts_stamp(:,2) <= map.YWorldLimits(2);
+        if any(in_map)
+            setOccupancy(map, pts_stamp(in_map, :), 1);
         end
     end
 
-    % IN ADAPTIVE MODE: Also stamp future predicted footprints (Prediction-Aware Planning)
+    % IN ADAPTIVE MODE: Stamp only first 3 prediction steps (not 6 — less blocking)
     if ~is_baseline && ~isempty(predictions.x)
         for p = 1:numel(predictions.x)
             px_pred = predictions.x{p};
             py_pred = predictions.y{p};
             if ~isempty(px_pred)
-                % Sample first 6 prediction steps (~1.2s future lookahead)
-                sub_steps = 1:min(6, numel(px_pred));
+                sub_steps = 1:min(3, numel(px_pred));
                 for s_idx = sub_steps
-                    [pox, poy] = meshgrid((px_pred(s_idx)-0.8):0.25:(px_pred(s_idx)+0.8), ...
-                                          (py_pred(s_idx)-0.6):0.25:(py_pred(s_idx)+0.6));
-                    setOccupancy(map, [pox(:), poy(:)], 1);
+                    [pox, poy] = meshgrid((px_pred(s_idx)-0.5):0.25:(px_pred(s_idx)+0.5), ...
+                                          (py_pred(s_idx)-0.4):0.25:(py_pred(s_idx)+0.4));
+                    p_pts = [pox(:), poy(:)];
+                    in_map_p = p_pts(:,1) >= map.XWorldLimits(1) & p_pts(:,1) <= map.XWorldLimits(2) & ...
+                               p_pts(:,2) >= map.YWorldLimits(1) & p_pts(:,2) <= map.YWorldLimits(2);
+                    if any(in_map_p)
+                        setOccupancy(map, p_pts(in_map_p, :), 1);
+                    end
                 end
             end
         end

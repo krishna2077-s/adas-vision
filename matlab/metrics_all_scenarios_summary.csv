@@ -1,2 +1,6 @@
 scenario,duration_s,distance_m,path_smoothness,collisions,mean_replan_ms,status
-dense_market,31.98,20.76,0.0003,10,0.04,FAIL (Hit)
+village_road,31.98,67.81,0.0002,0,0.09,TIMEOUT
+urban_intersection,30.00,80.97,0.0001,0,0.05,TIMEOUT
+highway_merge,24.98,186.61,0.0044,0,0.04,TIMEOUT
+dense_market,30.00,29.80,0.0002,0,0.03,TIMEOUT
+cattle_crossing,31.98,67.32,0.0001,0,0.03,TIMEOUT

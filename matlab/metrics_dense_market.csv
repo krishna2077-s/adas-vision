@@ -1,18 +1,18 @@
 metric,value,unit
 scenario,dense_market,
-timestamp,2026-08-27 00:46:21,
-duration_s,31.98,s
-distance_m,20.76,m
-mean_speed_kmh,2.35,km/h
+timestamp,2026-08-29 21:23:17,
+duration_s,30.00,s
+distance_m,29.80,m
+mean_speed_kmh,3.59,km/h
 max_speed_kmh,30.82,km/h
-path_smoothness,0.00028,rad/m
-lateral_rms_m,0.512,m
-min_clearance_m,0.44,m
-collisions,10,count
-n_replans,970,count
-mean_replan_ms,0.04,ms
-p95_replan_ms,0.07,ms
+path_smoothness,0.00024,rad/m
+lateral_rms_m,0.644,m
+min_clearance_m,1.94,m
+collisions,0,count
+n_replans,910,count
+mean_replan_ms,0.03,ms
+p95_replan_ms,0.08,ms
 max_decel_mps2,7.000,m/s2
-idle_fraction,0.778,frac
-proceed_fraction,0.010,frac
+idle_fraction,0.609,frac
+proceed_fraction,0.011,frac
 scenario_completed,0,bool

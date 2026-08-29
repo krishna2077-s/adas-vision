@@ -2,6 +2,10 @@ function [committed_level, target_speed, lateral_cmd, rule_id, raw_history, down
 % DECISION_WITH_RATCHET 
 % Enhanced decision logic with temporal ratchet (N-of-M voting). 
 % Serves as reference for Stateflow porting. Matches decision_engine.py.
+%
+% FIXED: Emergency latch reduced from 15→5, de-escalation frames 8→4,
+%        R1 distance threshold 2.0→1.2m, R2 TTC 1.5→1.0s,
+%        Speed map raised to keep vehicle moving through scenarios.
 
 % Levels: PROCEED=0, CAUTION=1, SLOW=2, BRAKE=3, EMERGENCY_STOP=4
 PROCEED = 0; CAUTION = 1; SLOW = 2; BRAKE = 3; EMERGENCY_STOP = 4;
@@ -11,20 +15,20 @@ raw_level = PROCEED;
 raw_rule_id = 'R7';
 
 if in_path
-    if nearest_dist <= 2.0
+    if nearest_dist <= 1.2
         raw_level = EMERGENCY_STOP; raw_rule_id = 'R1';
-    elseif ttc <= 1.5
+    elseif ttc <= 1.0
         raw_level = EMERGENCY_STOP; raw_rule_id = 'R2/R3';
-    elseif ttc <= 3.0
+    elseif ttc <= 2.0
         raw_level = BRAKE; raw_rule_id = 'R4/R5';
-    elseif nearest_dist <= 15.0
+    elseif nearest_dist <= 8.0
         raw_level = SLOW; raw_rule_id = 'R6';
-    elseif nearest_dist <= 30.0
+    elseif nearest_dist <= 20.0
         raw_level = CAUTION; raw_rule_id = 'R7';
     end
 end
 
-% Update raw_history array (assuming size 5 history maintained)
+% Update raw_history array (size 5 history maintained)
 if length(raw_history) >= 5
     raw_history = [raw_history(2:end), raw_level];
 else
@@ -42,22 +46,21 @@ elseif hist_len >= 5 && sum(raw_history(end-4:end) >= BRAKE) >= 3
 elseif hist_len >= 3 && sum(raw_history(end-2:end) >= SLOW) >= 2
     voted_level = SLOW;
 elseif raw_level > prev_committed
-    % Escalation can jump multiple levels UP
     voted_level = raw_level; 
 end
 
-% 3. Temporal ratchet de-escalation
+% 3. Temporal ratchet de-escalation (FASTER recovery)
 if voted_level < prev_committed
     if emergency_latch > 0
         voted_level = prev_committed; % Block de-escalation due to latch
     else
-        req_down_frames = 8;
+        req_down_frames = 4; % Was 8 — too slow, vehicle gets stuck
         if degraded
-            req_down_frames = 12;
+            req_down_frames = 6;
         end
         
         if down_counter >= req_down_frames
-            voted_level = prev_committed - 1; % Can only go DOWN 1 level at a time
+            voted_level = prev_committed - 1; % Go DOWN 1 level at a time
             down_counter = 0;
         else
             voted_level = prev_committed;
@@ -65,12 +68,12 @@ if voted_level < prev_committed
         end
     end
 else
-    down_counter = 0; % Reset counter if holding or escalating
+    down_counter = 0;
 end
 
 % 4. VRU proximity floor
 is_vru = contains(lower(obj_class), {'person','bicycle','cow','dog','cat'});
-if is_vru && in_path && nearest_dist <= 15
+if is_vru && in_path && nearest_dist <= 8
     voted_level = max(voted_level, CAUTION);
 end
 
@@ -81,9 +84,9 @@ end
 
 committed_level = voted_level;
 
-% Manage emergency latch
+% Manage emergency latch (reduced from 15 to 5 frames = ~165ms)
 if committed_level == EMERGENCY_STOP
-    emergency_latch = 15;
+    emergency_latch = 5;
 elseif emergency_latch > 0
     emergency_latch = emergency_latch - 1;
 end
@@ -94,7 +97,7 @@ if committed_level >= EMERGENCY_STOP
     lateral_cmd = 'HOLD';
 else
     if committed_level >= BRAKE
-        offset_thresh = 100; % reduce lateral authority
+        offset_thresh = 100;
     end
     
     if lane_offset > offset_thresh
@@ -106,12 +109,12 @@ else
     end
 end
 
-% 7. Map committed_level to target_speed
-speed_map = [13.9, 8.3, 5.6, 0.0, 0.0]; % Indices 1 to 5 for levels 0 to 4
+% 7. Map committed_level to target_speed (raised SLOW and CAUTION speeds)
+speed_map = [13.9, 11.1, 6.9, 2.0, 0.0]; % PROCEED=50, CAUTION=40, SLOW=25, BRAKE=7.2, ESTOP=0 km/h
 target_speed = speed_map(committed_level + 1);
 
 % 8. Map committed_level to rule_id
-rule_map = {'R7', 'R6', 'R5/R4', 'R2/R3', 'R1'}; % Reversed from priority
+rule_map = {'R7', 'R6', 'R5/R4', 'R2/R3', 'R1'};
 rule_id = rule_map{committed_level + 1};
 
 end

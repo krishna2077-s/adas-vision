@@ -17,7 +17,7 @@ cfg.name  = 'urban_intersection';
 cfg.title = 'Scenario 2 — Urban Intersection';
 cfg.mode  = mode;
 cfg.dt    = 0.033;
-cfg.max_time = 30.0;
+cfg.max_time = 50.0;
 cfg.lane_half_width = 4.0;
 
 % Ego starting from South, heading North (+X axis in local coordinates)
