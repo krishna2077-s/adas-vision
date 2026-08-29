@@ -221,7 +221,7 @@ class LearnedRoadDetector:
     def _load_torch(self) -> None:
         try:
             model = self._build_arch()
-            state = torch.load(self.model_path, map_location="cpu")
+            state = torch.load(self.model_path, map_location="cpu", weights_only=True)
             model.load_state_dict(state)
             # DeepLabV3's aux head is training-only — drop it to save CPU at inference.
             if cfg.LEARNED_ARCH.lower() == "deeplabv3" and getattr(model, "aux_classifier", None) is not None:
