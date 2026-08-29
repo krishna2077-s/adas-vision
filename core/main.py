@@ -38,6 +38,7 @@ import config as cfg
 from decision_engine import DecisionEngine
 from forward_collision_warning import ForwardCollisionWarning
 from frame_guard import is_valid_frame
+from hmi_overlay import HMIOverlay
 from lane_detection import LaneDetector
 from road_detection import RoadDetector
 from tracker import MultiObjectTracker
@@ -125,6 +126,9 @@ def run(
 
     # ── Module 3: decision engine (fuses whatever modules are enabled) ─────
     engine = DecisionEngine(frame_width=w, frame_height=h)
+
+    # ── Module 15: Premium HMI Overlay (replaces plain text HUD) ──────────
+    hmi = HMIOverlay(frame_width=w, frame_height=h)
 
     # ── Module 10: Forward Collision Warning (driver-facing staged alert) ──
     # Consumes the engine's already-selected hazard; warns a human, brakes nothing.
@@ -313,7 +317,12 @@ def run(
 
             # ── Module 3: fuse into one decision, then draw its HUD ────
             decision = engine.process(lane_result, tracks, detection_age_s=detection_age)
-            annotated = engine.draw_hud(annotated, decision)
+            # Module 15: draw premium HMI overlay instead of plain text HUD
+            sim_spd = controller.sim_speed if controller is not None else None
+            annotated = hmi.draw(annotated, decision,
+                                 lane_result=lane_result,
+                                 obj_result=obj_result,
+                                 sim_speed_mps=sim_spd)
 
             # ── Modules 5-9: advisory SIMULATION overlays ─────────────
             # Bird's-eye perception -> sim fusion -> prediction/planning ->

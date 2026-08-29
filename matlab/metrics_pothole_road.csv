@@ -1,0 +1,18 @@
+metric,value,unit
+scenario,pothole_road,
+timestamp,2026-08-30 01:59:20,
+duration_s,6.86,s
+distance_m,21.62,m
+mean_speed_kmh,11.45,km/h
+max_speed_kmh,35.52,km/h
+path_smoothness,0.00065,rad/m
+lateral_rms_m,0.486,m
+min_clearance_m,3.13,m
+collisions,0,count
+n_replans,209,count
+mean_replan_ms,0.13,ms
+p95_replan_ms,0.38,ms
+max_decel_mps2,4.000,m/s2
+idle_fraction,0.019,frac
+proceed_fraction,0.000,frac
+scenario_completed,0,bool

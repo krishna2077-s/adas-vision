@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<OpenDRIVE xmlns="http://www.opendrive.org" rev_major="1" rev_minor="7">
+  <header revMajor="1" revMinor="7" name="IndianUrbanIntersection" version="1.0"
+          date="2026-08-29" north="0" south="0" east="0" west="0"
+          vendor="ADASVision"/>
+
+  <road name="EastApproach" length="35.0" id="1" junction="10">
+    <link><successor elementType="junction" elementId="10"/></link>
+    <planView>
+      <geometry s="0.0" x="-35.0" y="0.0" hdg="0.0" length="35.0">
+        <line/></geometry>
+    </planView>
+    <elevationProfile><elevation s="0.0" a="0" b="0" c="0" d="0"/></elevationProfile>
+    <lateralProfile/>
+    <lanes>
+      <laneSection s="0.0">
+        <left>
+          <lane id="1" type="driving" level="false">
+            <width sOffset="0.0" a="3.5" b="0" c="0" d="0"/>
+            <roadMark sOffset="0.0" type="broken" weight="standard" color="white" laneChange="both"/>
+          </lane>
+        </left>
+        <center><lane id="0" type="none" level="false"><roadMark sOffset="0.0" type="solid" weight="standard" color="white"/></lane></center>
+        <right>
+          <lane id="-1" type="driving" level="false">
+            <width sOffset="0.0" a="3.5" b="0" c="0" d="0"/>
+            <roadMark sOffset="0.0" type="broken" weight="standard" color="white" laneChange="both"/>
+          </lane>
+        </right>
+      </laneSection>
+    </lanes>
+  </road>
+
+  <road name="NorthApproach" length="25.0" id="2" junction="10">
+    <link><successor elementType="junction" elementId="10"/></link>
+    <planView>
+      <geometry s="0.0" x="0.0" y="-25.0" hdg="1.5708" length="25.0">
+        <line/></geometry>
+    </planView>
+    <elevationProfile><elevation s="0.0" a="0" b="0" c="0" d="0"/></elevationProfile>
+    <lateralProfile/>
+    <lanes>
+      <laneSection s="0.0">
+        <left><lane id="1" type="driving" level="false"><width sOffset="0.0" a="3.0" b="0" c="0" d="0"/></lane></left>
+        <center><lane id="0" type="none" level="false"><roadMark sOffset="0.0" type="solid" weight="standard" color="white"/></lane></center>
+        <right><lane id="-1" type="driving" level="false"><width sOffset="0.0" a="3.0" b="0" c="0" d="0"/></lane></right>
+      </laneSection>
+    </lanes>
+  </road>
+
+  <junction name="UrbanIntersectionJunction" id="10">
+    <connection id="1" incomingRoad="1" connectingRoad="2" contactPoint="start">
+      <laneLink from="-1" to="1"/>
+    </connection>
+    <connection id="2" incomingRoad="2" connectingRoad="1" contactPoint="start">
+      <laneLink from="-1" to="1"/>
+    </connection>
+  </junction>
+
+</OpenDRIVE>

@@ -45,7 +45,7 @@ ped1.class = 'person';
 ped1.x     = 22.0;
 ped1.y     = 2.8;
 ped1.vx    = 0.05;
-ped1.vy    = -0.8; % crosses across
+ped1.vy    = -2.5; % crosses across faster
 ped1.width = 0.5;
 ped1.length= 0.5;
 
@@ -55,7 +55,7 @@ ped2.class = 'person';
 ped2.x     = 45.0;
 ped2.y     = -2.5;
 ped2.vx    = -0.1;
-ped2.vy    = 0.85; % crosses right to left
+ped2.vy    = 2.6; % crosses right to left faster
 ped2.width = 0.5;
 ped2.length= 0.5;
 

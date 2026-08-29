@@ -44,8 +44,7 @@ veh.min_turning_radius = 5.0;
 % Ego State [x, y, heading, speed]
 ego = scen_cfg.ego_init;
 goal = scen_cfg.goal;
-goal_tol = 4.0;
-if isfield(scen_cfg, 'goal_tol'), goal_tol = scen_cfg.goal_tol; end
+goal_tol = 1.0; % Forced tight tolerance so vehicle visually overlaps the goal
 
 % Decision & Ratchet State
 prev_committed  = 0; % PROCEED
@@ -106,29 +105,9 @@ if is_baseline, path_col = 'm--'; end
 h_path = plot(ax, NaN, NaN, path_col, 'LineWidth', 2.0); % Planned path
 h_pred = plot(ax, NaN, NaN, 'r:', 'LineWidth', 1.5); % Forecast trajectories
 h_traj = plot(ax, ego.x, ego.y, 'g-', 'LineWidth', 1.5); % Driven history
-h_ego  = plot(ax, ego.x, ego.y, 'o', 'MarkerSize', 14, 'MarkerFaceColor', [0 0.85 0.3], 'MarkerEdgeColor', 'w', 'LineWidth', 2);
+% Old ego and actor handles removed for Tesla-style dynamic UI
 
-% Actor handles map
-actor_handles = containers.Map();
-for k = 1:numel(scen_cfg.actors)
-    act = scen_cfg.actors{k};
-    col = [0.85 0.45 0.1];
-    marker = 's';
-    msize = 14;
-    if strcmpi(act.class, 'person'), col = [1.0 0.4 0.4]; marker = 'o'; msize = 10;
-    elseif strcmpi(act.class, 'cow'), col = [0.6 0.4 0.2]; marker = 's'; msize = 18;
-    elseif strcmpi(act.class, 'auto_rickshaw') || strcmpi(act.class, 'rickshaw'), col = [0.9 0.8 0.1]; marker = 'd'; msize = 14;
-    elseif strcmpi(act.class, 'pushcart') || strcmpi(act.class, 'thela'), col = [0.7 0.5 0.3]; marker = 's'; msize = 16;
-    elseif strcmpi(act.class, 'motorcycle'), col = [0.2 0.7 1.0]; marker = '^'; msize = 12;
-    elseif strcmpi(act.class, 'truck'), col = [0.9 0.5 0.1]; marker = 's'; msize = 20;
-    end
-    h_act = plot(ax, act.x, act.y, marker, 'MarkerSize', msize, 'MarkerFaceColor', col, 'MarkerEdgeColor', 'w', 'LineWidth', 1.5);
-    actor_handles(act.id) = h_act;
-end
-
-h_status = text(ax, 0.02, 0.94, '', 'Units', 'normalized', 'Color', 'w', ...
-                'FontSize', 10, 'VerticalAlignment', 'top', 'FontWeight', 'bold');
-
+% Status text removed, will be merged into the title to prevent overlap
 % ---------------------------------------------------------------------------
 % 3. Master Simulation Loop
 % ---------------------------------------------------------------------------
@@ -163,10 +142,7 @@ while t < max_time && ishandle(fig)
         actors{k} = scen_cfg.update_actor(actors{k}, t, dt, ego);
         act = actors{k};
         
-        % Update graphics
-        if isKey(actor_handles, act.id)
-            set(actor_handles(act.id), 'XData', act.x, 'YData', act.y);
-        end
+        % Graphics updated in Section I
 
         % Build track struct for perception/prediction
         dx = act.x - ego.x;
@@ -181,16 +157,27 @@ while t < max_time && ishandle(fig)
         % Only process actors within perceptual range (50m ahead)
         if dx > -5.0 && dx < 60.0 && abs(dy) < 25.0
             tr.track_id = k;
-            tr.x = act.x;
-            tr.y = act.y;
+            
+            % --- SIH COMPLIANCE: Simulated Sensor Noise (Lidar/Radar Fusion) ---
+            range_sigma = max(0.05, 0.01 * dist_act); % Reduced noise for narrow scenarios
+            tr.x = act.x + randn() * range_sigma;
+            tr.y = act.y + randn() * range_sigma;
+            
             tr.vx = act.vx;
             tr.vy = act.vy;
             tr.class = act.class;
             tracks_struct = [tracks_struct, tr]; %#ok<AGROW>
 
-            % Check path obstruction & closing velocity
-            lat_dist = abs(dy);
-            if dx > 0 && lat_dist < (veh.width_m/2 + act.width/2 + 0.6)
+            % Check path obstruction based on planned path (not just straight line)
+            if ~isempty(current_path.x)
+                path_pts = [current_path.x, current_path.y];
+                dists_to_path = sqrt(sum((path_pts - [act.x, act.y]).^2, 2));
+                lat_dist = min(dists_to_path);
+            else
+                lat_dist = abs(dy);
+            end
+            
+            if dx > -1.0 && lat_dist < (veh.width_m/2 + act.width/2 + 0.4)
                 in_path_hazard = true;
                 v_rel = (ego.speed - act.vx * cos(ego.heading));
                 if v_rel > 0
@@ -341,6 +328,9 @@ while t < max_time && ishandle(fig)
     % -----------------------------------------------------------------------
     % F. Speed-Adaptive Pure Pursuit Steering & PID Throttle/Brake
     % -----------------------------------------------------------------------
+    % Clamp target speed to scenario's intended cruise speed (prevents racing in markets)
+    target_speed_mps = min(target_speed_mps, scen_cfg.ego_init.speed * 1.2);
+    
     % Speed-adaptive lookahead distance: La = max(3.5, min(14.0, 0.45 * v + 3.5))
     la = max(3.5, min(14.0, 0.45 * ego.speed + 3.5));
     steer = 0.0;
@@ -405,15 +395,56 @@ while t < max_time && ishandle(fig)
     % -----------------------------------------------------------------------
     % I. Graphics Update
     % -----------------------------------------------------------------------
-    set(h_ego,  'XData', ego.x, 'YData', ego.y);
     set(h_traj, 'XData', traj_x, 'YData', traj_y);
+    
+    % Clear old dynamic UI elements
+    delete(findobj(ax, 'Tag', 'dynamic_ui'));
+    
+    % Draw Ego Vehicle (Green Tesla Shape)
+    hw = 1.0; hl = 2.2;
+    ego_corners_x = [-hl, hl, hl+0.5, hl, -hl];
+    ego_corners_y = [-hw, -hw, 0, hw, hw];
+    R_ego = [cos(ego.heading) -sin(ego.heading); sin(ego.heading) cos(ego.heading)];
+    rot_ego = R_ego * [ego_corners_x; ego_corners_y];
+    fill(ax, ego.x + rot_ego(1,:), ego.y + rot_ego(2,:), [0 1 0.4], 'EdgeColor', 'w', 'LineWidth', 1.5, 'Tag', 'dynamic_ui');
+    text(ax, ego.x, ego.y - 2.5, 'ADAS', 'Color', [0 1 0.4], 'FontSize', 9, 'FontWeight', 'bold', 'HorizontalAlignment', 'center', 'Tag', 'dynamic_ui');
+    
+    % Draw Actors (Color-coded boxes with labels)
+    for k = 1:numel(actors)
+        act = actors{k};
+        v_mag = sqrt(act.vx^2 + act.vy^2);
+        
+        act_w = 1.5; act_l = 3.0; col = [0.8 0.2 0.2]; lbl = 'Obstacle';
+        switch lower(act.class)
+            case {'cow','cattle','dog'}, col = [0.9 0.6 0.1]; act_w = 1.0; act_l = 2.0; lbl = 'Cow';
+            case 'person', col = [1.0 0.4 0.7]; act_w = 0.6; act_l = 0.6; lbl = 'Pedestrian';
+            case {'auto_rickshaw','rickshaw'}, col = [0.9 0.9 0.1]; act_w = 1.4; act_l = 2.6; lbl = 'Auto';
+            case 'car', col = [0.2 0.6 1.0]; lbl = 'Car';
+            case 'truck', col = [0.5 0.2 0.8]; act_w = 2.5; act_l = 8.0; lbl = 'Truck';
+            case {'bicycle','motorcycle'}, col = [0.2 0.8 0.2]; act_w = 0.8; act_l = 2.0; lbl = 'Bike';
+            case {'pothole','debris'}, col = [0.2 0.2 0.2]; lbl = 'Hazard';
+        end
+        
+        act_h = 0; if v_mag > 0.1, act_h = atan2(act.vy, act.vx); end
+        
+        hw = act_w/2; hl = act_l/2;
+        corners_x = [-hl, hl, hl, -hl]; corners_y = [-hw, -hw, hw, hw];
+        R = [cos(act_h) -sin(act_h); sin(act_h) cos(act_h)];
+        rot_corners = R * [corners_x; corners_y];
+        
+        fill(ax, act.x + rot_corners(1,:), act.y + rot_corners(2,:), col, 'EdgeColor', 'w', 'FaceAlpha', 0.8, 'Tag', 'dynamic_ui');
+        if v_mag > 0.1
+            plot(ax, [act.x, act.x + act.vx*1.5], [act.y, act.y + act.vy*1.5], 'w-', 'LineWidth', 1.5, 'Tag', 'dynamic_ui');
+        end
+        text(ax, act.x, act.y + hw + 1.0, sprintf('%s (%.1fm/s)', lbl, v_mag), 'Color', col, 'FontSize', 9, 'FontWeight', 'bold', 'HorizontalAlignment', 'center', 'BackgroundColor', [0 0 0 0.5], 'Margin', 1, 'Tag', 'dynamic_ui');
+    end
 
     xlim(ax, [ego.x - 15, ego.x + 65]);
 
     col = scenario_color(decision_str);
-    set(h_status, 'String', sprintf('t=%.1fs | [%s] %s [%s] | Speed: %.1f km/h | Min Clearance: %.1fm | Replans: %d', ...
-        t, upper(mode), decision_str, rule_id, ego.speed*3.6, min_dist_this_frame, log_data.replans), 'Color', col);
-    title(ax, sprintf('Scenario: %s [%s Mode]  |  Status: %s', scen_cfg.title, upper(mode), decision_str), 'Color', col, 'FontSize', 12);
+    title_str = sprintf('Scenario: %s [%s Mode] | %s [%s] | Speed: %.1f km/h | Clear: %.1fm', ...
+        scen_cfg.title, upper(mode), decision_str, rule_id, ego.speed*3.6, min_dist_this_frame);
+    title(ax, title_str, 'Color', col, 'FontSize', 12, 'FontWeight', 'bold');
 
     drawnow limitrate;
     t = t + dt;

@@ -1,0 +1,11 @@
+scenario,mode,duration_s,distance_m,path_smoothness,min_clearance_m,collisions,mean_replan_ms,status
+village_road,BASELINE,3.73,49.06,0.0000,36.31,0,0.00,TIMEOUT
+village_road,ADAPTIVE,31.98,67.81,0.0002,1.03,0,0.06,TIMEOUT
+urban_intersection,BASELINE,1.12,12.86,0.0000,32.74,0,0.00,TIMEOUT
+urban_intersection,ADAPTIVE,30.00,80.97,0.0001,2.13,0,0.07,TIMEOUT
+highway_merge,BASELINE,1.58,22.01,0.0000,26.38,0,0.00,TIMEOUT
+highway_merge,ADAPTIVE,24.98,186.61,0.0048,3.75,0,0.08,TIMEOUT
+dense_market,BASELINE,3.93,17.43,0.0000,4.65,0,0.00,TIMEOUT
+dense_market,ADAPTIVE,30.00,29.80,0.0002,1.94,0,0.05,TIMEOUT
+cattle_crossing,BASELINE,24.98,63.20,0.0000,12.45,0,0.00,TIMEOUT
+cattle_crossing,ADAPTIVE,29.73,67.32,0.0001,7.62,0,0.04,TIMEOUT

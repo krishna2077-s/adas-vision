@@ -20,29 +20,26 @@ function [should_replan, reason] = replan_trigger(current_path, predictions, tim
         return;
     end
     
-    % Condition 2: Periodic replan every 200ms
-    if time_since_last_replan_ms >= 200
+    % Condition 2: Periodic replan every 1000ms (reduces computation lag)
+    if time_since_last_replan_ms >= 1000
         should_replan = true;
-        reason = 'Periodic replanning (time >= 200ms)';
+        reason = 'Periodic replanning (time >= 1000ms)';
         return;
     end
     
     path_points = [current_path.x, current_path.y];
     
     % Condition 3: Path-prediction intersection check
-    % For each point on current_path, check distance to each predicted trajectory point.
-    % If min distance < 2.0m, trigger replan.
+    % If min distance < 1.2m (tighter threshold for dense markets), trigger replan.
     if ~isempty(predictions) && isfield(predictions, 'x') && ~isempty(predictions.x)
         num_preds = length(predictions.x);
         for p = 1:num_preds
             pred_pts = [predictions.x{p}, predictions.y{p}];
             if ~isempty(pred_pts)
-                % Compute pairwise distances between path points and predicted points
-                % Efficient vectorized distance calculation
                 dists = pdist2(path_points, pred_pts);
-                if min(dists(:)) < 2.0
+                if min(dists(:)) < 1.2
                     should_replan = true;
-                    reason = 'Predicted obstacle trajectory intersects path within 2m clearance';
+                    reason = 'Predicted obstacle trajectory intersects path within 1.2m clearance';
                     return;
                 end
             end

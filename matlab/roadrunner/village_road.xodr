@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<OpenDRIVE xmlns="http://www.opendrive.org" rev_major="1" rev_minor="7">
+  <header revMajor="1" revMinor="7" name="IndianVillageRoad" version="1.0"
+          date="2026-08-29" north="0" south="0" east="0" west="0"
+          vendor="ADASVision"/>
+
+  <road name="VillageRoad_Unmarked" length="210.05" id="1" junction="-1">
+    <link>
+      <predecessor elementType="road" elementId="-1"/>
+      <successor elementType="road" elementId="-1"/>
+    </link>
+    <type s="0.0" type="rural"/>
+    <planView>
+      <geometry s="0.0" x="0.0" y="0.0" hdg="0.0" length="210.05">
+        <line/>
+      </geometry>
+    </planView>
+    <elevationProfile>
+      <elevation s="0.0" a="0.0" b="0.0" c="0.0" d="0.0"/>
+    </elevationProfile>
+    <lateralProfile/>
+    <lanes>
+      <laneSection s="0.0">
+        <left>
+          <lane id="1" type="driving" level="false">
+            <width sOffset="0.0" a="3.00" b="0" c="0" d="0"/>
+            <roadMark sOffset="0.0" type="none" weight="standard" color="white"/>
+          </lane>
+        </left>
+        <center>
+          <lane id="0" type="none" level="false">
+            <roadMark sOffset="0.0" type="none" weight="standard" color="white"/>
+          </lane>
+        </center>
+        <right>
+          <lane id="-1" type="driving" level="false">
+            <width sOffset="0.0" a="3.00" b="0" c="0" d="0"/>
+            <roadMark sOffset="0.0" type="none" weight="standard" color="white"/>
+          </lane>
+        </right>
+      </laneSection>
+    </lanes>
+    <objects/>
+    <signals/>
+  </road>
+
+</OpenDRIVE>

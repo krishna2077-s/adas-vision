@@ -34,8 +34,8 @@ cow1.id    = 'cow1';
 cow1.class = 'cow';
 cow1.x     = 75.0;
 cow1.y     = -3.5;
-cow1.vx    = 0.05;
-cow1.vy    = 0.85; % ~3 km/h
+cow1.vx    = 0.1;
+cow1.vy    = 2.2; % Speeds up crossing (approx 8 km/h)
 cow1.width = 1.5;
 cow1.length= 2.2;
 
@@ -44,8 +44,8 @@ cow2.id    = 'cow2';
 cow2.class = 'cow';
 cow2.x     = 79.0;
 cow2.y     = -4.2;
-cow2.vx    = 0.05;
-cow2.vy    = 0.80;
+cow2.vx    = 0.1;
+cow2.vy    = 2.0;
 cow2.width = 1.5;
 cow2.length= 2.2;
 

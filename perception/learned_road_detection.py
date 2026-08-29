@@ -424,10 +424,11 @@ class LearnedRoadDetector:
     def _annotate(self, frame, mask, centre, look_x, offset) -> np.ndarray:
         out = frame.copy()
 
-        # Translucent drivable-surface fill (distinct colour from Module 1b)
+        # Translucent drivable-surface fill — reduced alpha for cleaner HMI view
         fill = np.zeros_like(out)
         fill[mask > 0] = cfg.LEARNED_FILL_COLOR
-        out = cv2.addWeighted(out, 1.0, fill, cfg.LEARNED_FILL_ALPHA, 0)
+        alpha = min(cfg.LEARNED_FILL_ALPHA, 0.28)   # cap at 0.28 so detections are visible
+        out = cv2.addWeighted(out, 1.0, fill, alpha, 0)
 
         # Curved centreline
         pts = [(x, y) for (y, x, _wd) in centre]
@@ -441,7 +442,5 @@ class LearnedRoadDetector:
         cv2.circle(out, (look_x, y_marker), 8, cfg.COLOR_CENTER_LINE, -1)
         cv2.line(out, (cx, y_marker), (look_x, y_marker), cfg.COLOR_CENTER_LINE, 2)
 
-        # Mode tag so the driver knows this is the learned model, not paint
-        cv2.putText(out, "LEARNED ROAD (IDD)", (14, self.h - 108),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, cfg.LEARNED_FILL_COLOR, 2, cv2.LINE_AA)
+        # "LEARNED ROAD (IDD)" label suppressed — shown in HMI top bar LANE field
         return out

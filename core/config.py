@@ -483,7 +483,7 @@ ENABLE_ASYNC_DETECTION = False
 # See ROADMAP.md and the README safety notice.
 
 # --- Layer 3: bird's-eye (ego-frame) projection, the shared 3D-ish space -----
-ENABLE_BEV        = True
+ENABLE_BEV        = False   # HMI: disabled to keep the view clean
 BEV_RANGE_M       = 60.0    # forward distance shown in the bird's-eye panel
 BEV_HALF_WIDTH_M  = 12.0    # lateral half-width shown (+/-)
 BEV_PANEL_W       = 200     # panel size in px
@@ -495,14 +495,14 @@ COLOR_BEV_RADAR   = (0, 180, 255)   # simulated-radar estimate
 COLOR_BEV_FUSED   = (255, 255, 255) # fused estimate
 
 # --- Layer 1: simulated sensor fusion ----------------------------------------
-ENABLE_FUSION          = True
+ENABLE_FUSION          = False  # HMI: disabled to keep the view clean
 RADAR_RANGE_NOISE_M    = 0.8   # sim-radar range noise (1 sigma)
 RADAR_VEL_NOISE_MPS    = 0.4   # sim-radar range-rate noise (1 sigma)
 FUSION_CAM_RANGE_VAR   = 9.0   # camera depth is noisy (variance, m^2)
 FUSION_RADAR_RANGE_VAR = 0.6   # radar range is precise (variance, m^2)
 
 # --- Layer 4: prediction & planning ------------------------------------------
-ENABLE_PLANNING     = True
+ENABLE_PLANNING     = False  # HMI: disabled to keep the view clean
 PRED_HORIZON_S      = 3.0     # how far ahead objects are predicted
 PRED_STEP_S         = 0.5     # prediction sampling step
 PLAN_CRUISE_MPS     = 13.9    # nominal cruise target (~50 km/h)
@@ -512,7 +512,7 @@ COLOR_PLAN_PATH     = (0, 255, 180)   # advisory path ribbon
 COLOR_PRED_ARROW    = (180, 120, 255) # predicted object motion (BEV)
 
 # --- Layer 5: simulated control — NEVER wired to a vehicle -------------------
-ENABLE_CONTROL_SIM  = True
+ENABLE_CONTROL_SIM  = False  # HMI: disabled to keep the view clean
 CTRL_WHEELBASE_M    = 2.7
 CTRL_LOOKAHEAD_M    = 8.0     # pure-pursuit look-ahead
 CTRL_MAX_STEER_DEG  = 35.0

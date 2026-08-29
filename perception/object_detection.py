@@ -224,6 +224,12 @@ class ObjectDetector:
             x1, y1, x2, y2 = map(int, box.xyxy[0])
 
             det = Detection(label=label, confidence=conf, x1=x1, y1=y1, x2=x2, y2=y2)
+
+            # ── India-specific: YOLOv8n frequently misclassifies cows as dogs.
+            # A real dog bounding box is rarely taller than ~80px on a dashcam;
+            # anything larger is almost certainly a cow on an Indian road. ──
+            if det.label == "dog" and det.height >= 80:
+                det = Detection(label="cow", confidence=conf, x1=x1, y1=y1, x2=x2, y2=y2)
             det.distance_m = self._estimate_distance(det)
             det.in_path    = self._is_in_path(det, lane_center_x)
             det.risk       = self._assess_risk(det)

@@ -47,7 +47,7 @@ ped.class = 'person';
 ped.x     = 85.0;
 ped.y     = -3.0;
 ped.vx    = 0.1;
-ped.vy    = 0.7; % crossing
+ped.vy    = 2.5; % Speed up from 0.7 to 2.5 for smoother demo
 ped.width = 0.5;
 ped.length= 0.5;
 

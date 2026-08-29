@@ -476,67 +476,15 @@ class LaneDetector:
             cv2.circle(frame, (lc, y_marker), 8, cfg.COLOR_CENTER_LINE, -1)
             cv2.line(frame, (cx, y_marker), (lc, y_marker), cfg.COLOR_CENTER_LINE, 2)
 
-        # ── Offset bar ───────────────────────────────────────────────
-        self._draw_offset_bar(frame, result.offset_px)
-
-        # ── HUD panel ───────────────────────────────────────────────
-        self._draw_hud(frame, result)
+        # ── Offset bar + HUD panel are now handled by HMIOverlay ────
+        # (suppressed here to avoid overlap with the premium dashboard)
 
         return frame
 
     def _draw_offset_bar(self, frame: np.ndarray, offset: int) -> None:
-        """Draws a horizontal bar at the bottom showing drift direction."""
-        bar_y   = self.h - 30
-        bar_w   = 300
-        bar_h   = 18
-        cx      = self.w // 2
-        bar_x   = cx - bar_w // 2
-
-        # Background
-        cv2.rectangle(frame,
-                      (bar_x, bar_y),
-                      (bar_x + bar_w, bar_y + bar_h),
-                      (50, 50, 50), -1)
-
-        # Fill indicating drift
-        max_offset = cfg.STEER_THRESHOLD_HARD
-        fill = int((offset / max_offset) * (bar_w // 2))
-        fill = max(-bar_w // 2, min(bar_w // 2, fill))
-
-        mid = bar_x + bar_w // 2
-        if fill >= 0:
-            color = cfg.COLOR_WARNING if fill > bar_w // 4 else (0, 200, 255)
-            cv2.rectangle(frame, (mid, bar_y), (mid + fill, bar_y + bar_h), color, -1)
-        else:
-            color = cfg.COLOR_WARNING if fill < -bar_w // 4 else (0, 200, 255)
-            cv2.rectangle(frame, (mid + fill, bar_y), (mid, bar_y + bar_h), color, -1)
-
-        # Centre tick
-        cv2.line(frame, (mid, bar_y - 4), (mid, bar_y + bar_h + 4), (255, 255, 255), 2)
-        cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_w, bar_y + bar_h), (180, 180, 180), 1)
+        """Suppressed — offset is now shown in the HMIOverlay bottom strip."""
+        pass
 
     def _draw_hud(self, frame: np.ndarray, result: LaneDetectionResult) -> None:
-        """Draws the info panel in the top-left corner."""
-        panel_w, panel_h = 320, 160
-        cv2.rectangle(frame, (10, 10), (10 + panel_w, 10 + panel_h), cfg.COLOR_HUD_BG, -1)
-        cv2.rectangle(frame, (10, 10), (10 + panel_w, 10 + panel_h), (80, 80, 80), 1)
-
-        # Steering colour
-        s = result.steering
-        s_color = cfg.COLOR_OK if "STRAIGHT" in s else cfg.COLOR_WARNING
-
-        lines_text = [
-            (f"FPS         : {result.fps:.1f}", (200, 200, 200)),
-            (f"Offset      : {result.offset_px:+d} px",
-             cfg.COLOR_WARNING if abs(result.offset_px) > cfg.STEER_THRESHOLD_SLIGHT else cfg.COLOR_OK),
-            (f"Confidence  : {result.confidence:.0%}", (200, 200, 200)),
-            (f"Left lane   : {'YES' if result.left_lane  else 'NO'}",
-             cfg.COLOR_OK if result.left_lane  else cfg.COLOR_WARNING),
-            (f"Right lane  : {'YES' if result.right_lane else 'NO'}",
-             cfg.COLOR_OK if result.right_lane else cfg.COLOR_WARNING),
-            (f"Steering    : {s}", s_color),
-        ]
-
-        for i, (text, color) in enumerate(lines_text):
-            cv2.putText(frame, text, (20, 38 + i * 22),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1, cv2.LINE_AA)
+        """Suppressed — replaced by HMIOverlay premium dashboard."""
+        pass

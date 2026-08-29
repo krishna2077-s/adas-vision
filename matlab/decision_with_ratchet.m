@@ -32,7 +32,7 @@ else
 end
 
 % 2. Temporal ratchet escalation (N-of-M voting)
-voted_level = prev_committed;
+voted_level = raw_level;
 hist_len = length(raw_history);
 
 if hist_len >= 3 && sum(raw_history(end-2:end) == EMERGENCY_STOP) >= 2
@@ -81,8 +81,8 @@ end
 
 committed_level = voted_level;
 
-% Manage emergency latch
-if committed_level == EMERGENCY_STOP
+% Manage emergency latch (Only trigger on entry to prevent infinite deadlock)
+if committed_level == EMERGENCY_STOP && prev_committed ~= EMERGENCY_STOP
     emergency_latch = 15;
 elseif emergency_latch > 0
     emergency_latch = emergency_latch - 1;

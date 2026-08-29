@@ -195,10 +195,10 @@ class ForwardCollisionWarning:
         if state.level == IMMINENT and blink_on:
             cv2.rectangle(frame, (2, 2), (self.w - 3, self.h - 3), color, 6)
 
-        # ── top-centre banner ─────────────────────────────────────────
-        bw, bh = 480, 44
+        # ── top-centre banner (sits below the 52px HMI top bar) ──────
+        bw, bh = 480, 38
         x0 = self.w // 2 - bw // 2
-        y0 = 8
+        y0 = 56
         if blink_on:
             self._filled(frame, x0, y0, bw, bh, color, 0.78)
         cv2.rectangle(frame, (x0, y0), (x0 + bw, y0 + bh), color, 2)
