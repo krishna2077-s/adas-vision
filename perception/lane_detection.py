@@ -170,8 +170,10 @@ class LaneDetector:
 
         # Scale line endpoints back to full resolution so everything downstream
         # (splitting, averaging, smoothing, drawing) works in frame pixels.
-        if raw_lines is not None and self._scale != 1.0:
-            raw_lines = (raw_lines.astype(np.float32) / self._scale).round().astype(np.int32)
+        if raw_lines is not None:
+            raw_lines = raw_lines.reshape(-1, 4)
+            if self._scale != 1.0:
+                raw_lines = (raw_lines.astype(np.float32) / self._scale).round().astype(np.int32)
 
         # ── 4. Separate + average left / right ────────────────────────
         left_raw, right_raw = self._split_lines(raw_lines)
@@ -249,7 +251,10 @@ class LaneDetector:
         cx = self.w / 2
 
         for line in raw_lines:
-            x1, y1, x2, y2 = line.flatten()
+            coords = np.asarray(line).ravel()
+            if len(coords) < 4:
+                continue
+            x1, y1, x2, y2 = coords[:4]
             dx = x2 - x1
             if dx == 0:
                 continue
@@ -442,8 +447,10 @@ class LaneDetector:
             cv2.polylines(frame, self._roi_polygon, True, cfg.COLOR_ROI, 2)
             if raw_lines is not None:
                 for line in raw_lines:
-                    x1, y1, x2, y2 = line[0]
-                    cv2.line(frame, (x1, y1), (x2, y2), (255, 0, 255), 1)
+                    coords = np.asarray(line).ravel()
+                    if len(coords) >= 4:
+                        x1, y1, x2, y2 = coords[:4]
+                        cv2.line(frame, (int(x1), int(y1)), (int(x2), int(y2)), (255, 0, 255), 1)
 
         # ── Lane fill polygon ────────────────────────────────────────
         if result.left_lane and result.right_lane:

@@ -28,8 +28,10 @@ Controls while running:
 """
 
 import argparse
+import collections
 import logging
 import sys
+import time
 from pathlib import Path
 
 import cv2
@@ -199,6 +201,9 @@ def run(
     window_name = "ADAS Vision  (Q quit | D debug | P pause | S screenshot)"
 
     logger.info("Starting. Press Q to quit.")
+
+    # ── Rolling FPS counter (last 60 frames) ──────────────────────────────
+    _frame_times: collections.deque = collections.deque(maxlen=60)
 
     annotated = None
     frame_no = 0            # actual source frame position (resets on video loop)
@@ -381,6 +386,18 @@ def run(
             if writer:
                 writer.write(annotated)
             frame_no += 1
+
+            # ── Live FPS counter drawn on top of everything ───────────────
+            _frame_times.append(time.perf_counter())
+            if len(_frame_times) >= 2:
+                fps_live = (len(_frame_times) - 1) / (_frame_times[-1] - _frame_times[0])
+                fps_color = (0, 220, 0) if fps_live >= 55 else (0, 200, 255) if fps_live >= 30 else (0, 0, 255)
+                cv2.putText(annotated, f"FPS: {fps_live:.1f}",
+                            (annotated.shape[1] - 160, 36),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.85, (0, 0, 0), 3, cv2.LINE_AA)
+                cv2.putText(annotated, f"FPS: {fps_live:.1f}",
+                            (annotated.shape[1] - 160, 36),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.85, fps_color, 2, cv2.LINE_AA)
 
         if annotated is not None:
             cv2.imshow(window_name, annotated)

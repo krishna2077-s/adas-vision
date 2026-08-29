@@ -17,7 +17,7 @@ cfg.name  = 'highway_merge';
 cfg.title = 'Scenario 3 — Highway Merge';
 cfg.mode  = mode;
 cfg.dt    = 0.033;
-cfg.max_time = 25.0;
+cfg.max_time = 50.0;
 cfg.lane_half_width = 7.5; % 2-lane dual carriageway
 
 cfg.ego_init.x       = 0.0;
@@ -26,7 +26,7 @@ cfg.ego_init.heading = 0.0;
 cfg.ego_init.speed   = 13.88;  % 50 km/h
 
 cfg.goal = [260.0, -1.875, 0.0];
-cfg.goal_tol = 5.0;
+cfg.goal_tol = 1.5;
 
 % Actors
 % 1. Heavy Commercial Truck (Tata 1613 style, merges from on-ramp)

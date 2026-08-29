@@ -17,16 +17,16 @@ cfg.name  = 'cattle_crossing';
 cfg.title = 'Scenario 5 — Cattle Crossing';
 cfg.mode  = mode;
 cfg.dt    = 0.033;
-cfg.max_time = 32.0;
+cfg.max_time = 50.0;
 cfg.lane_half_width = 3.5;
 
 cfg.ego_init.x       = 0.0;
-cfg.ego_init.y       = 0.0;
+cfg.ego_init.y       = -0.4;
 cfg.ego_init.heading = 0.0;
 cfg.ego_init.speed   = 8.33; % 30 km/h
 
 cfg.goal = [160.0, 0.0, 0.0];
-cfg.goal_tol = 4.0;
+cfg.goal_tol = 1.5;
 
 % Actors
 % Cow 1: Starts at x=75m, y=-3.5m (crosses to y=+3.5m)

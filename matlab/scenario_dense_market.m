@@ -17,16 +17,16 @@ cfg.name  = 'dense_market';
 cfg.title = 'Scenario 4 — Dense Indian Market';
 cfg.mode  = mode;
 cfg.dt    = 0.033;
-cfg.max_time = 30.0;
+cfg.max_time = 55.0;
 cfg.lane_half_width = 3.5; % 3.5m half width (7m total street)
 
 cfg.ego_init.x       = 0.0;
-cfg.ego_init.y       = 0.0;
+cfg.ego_init.y       = -0.4;
 cfg.ego_init.heading = 0.0;
 cfg.ego_init.speed   = 3.33; % 12 km/h creeping speed
 
 cfg.goal = [85.0, 0.0, 0.0];
-cfg.goal_tol = 4.0;
+cfg.goal_tol = 1.5;
 
 % Actors
 % 1. Static Pushcart (Thela) parked at x=32m, y=-1.4m
@@ -59,11 +59,11 @@ ped2.vy    = 0.85; % crosses right to left
 ped2.width = 0.5;
 ped2.length= 0.5;
 
-% 4. Oncoming Scooter weaving at far end (x=85m, y=-1.2m)
+% 4. Oncoming Scooter weaving at far end (x=85m, y=1.2m)
 scoot.id    = 'scoot';
 scoot.class = 'motorcycle';
 scoot.x     = 85.0;
-scoot.y     = -1.2;
+scoot.y     = 1.2;
 scoot.vx    = -4.16; % 15 km/h
 scoot.vy    = 0.0;
 scoot.width = 0.8;

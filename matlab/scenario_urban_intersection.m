@@ -17,17 +17,17 @@ cfg.name  = 'urban_intersection';
 cfg.title = 'Scenario 2 — Urban Intersection';
 cfg.mode  = mode;
 cfg.dt    = 0.033;
-cfg.max_time = 30.0;
+cfg.max_time = 50.0;
 cfg.lane_half_width = 4.0;
 
 % Ego starting from South, heading North (+X axis in local coordinates)
 cfg.ego_init.x       = 0.0;
-cfg.ego_init.y       = 0.0;
+cfg.ego_init.y       = -0.5;
 cfg.ego_init.heading = 0.0;
 cfg.ego_init.speed   = 6.94; % 25 km/h
 
 cfg.goal = [120.0, 0.0, 0.0];
-cfg.goal_tol = 4.0;
+cfg.goal_tol = 1.5;
 
 % Actors
 % 1. Cross-traffic Car (from East to West at x=50m)
