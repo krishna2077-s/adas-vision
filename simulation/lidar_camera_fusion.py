@@ -211,7 +211,7 @@ def run_lidar_camera_fusion():
             fused_detections.append(det)
 
         # 3. Update Multi-Object Tracker with Fused Kinematics
-        confirmed_tracks = tracker.update(fused_detections, dt=1.0/fps_video)
+        confirmed_tracks = tracker.update(fused_detections)
 
         # 4. Evaluate Safety Decision Engine (R1-R7)
         decision = decision_engine.process(None, confirmed_tracks, detection_age_s=0.0)
