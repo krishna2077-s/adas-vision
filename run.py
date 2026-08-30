@@ -72,7 +72,20 @@ if __name__ == "__main__":
         runpy.run_path(str(ROOT / "simulation" / "lidar_camera_fusion.py"),
                        run_name="__main__")
 
+    elif subcmd in ("sim", "scenario"):
+        scen = sys.argv.pop(0) if sys.argv else "multicar"
+        mapping = {
+            "village": "simulation/scenario_village_road.py",
+            "intersection": "simulation/scenario_urban_intersection.py",
+            "cattle": "simulation/scenario_cattle_crossing.py",
+            "multicar": "simulation/scenario_multicar_unmarked.py",
+            "cosim": "simulation/cosimulation.py",
+        }
+        target = mapping.get(scen, "simulation/scenario_multicar_unmarked.py")
+        import runpy
+        runpy.run_path(str(ROOT / target), run_name="__main__")
+
     else:
         print(f"Unknown subcommand: {subcmd!r}")
-        print("Valid subcommands: main | bridge | demo | test | audit | lidar")
+        print("Valid subcommands: main | bridge | demo | test | audit | lidar | sim [multicar|village|intersection|cattle|cosim]")
         sys.exit(1)
