@@ -200,6 +200,14 @@ def run(
     last_status = None
     window_name = "ADAS Vision  (Q quit | D debug | P pause | S screenshot)"
 
+    # Create a resizable window up-front so large (e.g. 1080p) videos never
+    # bleed off screen — the user can drag/resize freely at any time.
+    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+    # Scale down to a sensible default if the source is wider than 1280px.
+    if w > 1280:
+        display_h = int(h * 1280 / w)
+        cv2.resizeWindow(window_name, 1280, display_h)
+
     logger.info("Starting. Press Q to quit.")
 
     # ── Rolling FPS counter (last 60 frames) ──────────────────────────────
