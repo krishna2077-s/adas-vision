@@ -47,7 +47,7 @@ def reorient_video():
 
     cap.release()
     out.release()
-    print(f"✅ Successfully exported upright video: {OUTPUT_VIDEO} ({count} frames)")
+    print(f"[SUCCESS] Successfully exported upright video: {OUTPUT_VIDEO} ({count} frames)")
 
 if __name__ == "__main__":
     reorient_video()

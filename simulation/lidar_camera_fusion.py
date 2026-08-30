@@ -167,11 +167,13 @@ def run_lidar_camera_fusion():
     cap = cv2.VideoCapture(target_video)
     fps_video = cap.get(cv2.CAP_PROP_FPS) or 60.0
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    video_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1920
+    video_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 1440
 
-    # Initialize Perception Modules
-    detector = ObjectDetector()
+    # Initialize Perception Modules with video dimensions
+    detector = ObjectDetector(frame_width=video_w, frame_height=video_h)
     tracker = MultiObjectTracker()
-    decision_engine = DecisionEngine()
+    decision_engine = DecisionEngine(frame_width=video_w, frame_height=video_h)
 
     frame_idx = 0
     t_start = time.time()
@@ -197,7 +199,8 @@ def run_lidar_camera_fusion():
                 depth_map = cv2.rotate(raw_depth, cv2.ROTATE_180)
 
         # 1. Run YOLO Object Detection
-        detections = detector.detect(frame)
+        det_result, _ = detector.process(frame, lane_center_x=rgb_w // 2)
+        detections = det_result.detections if det_result else []
 
         # 2. Fuse Active LiDAR Distance into Detections
         fused_detections = []
@@ -205,16 +208,13 @@ def run_lidar_camera_fusion():
             lidar_dist = sample_lidar_distance(depth_map, det.x1, det.y1, det.x2, det.y2, rgb_w, rgb_h)
             if lidar_dist is not None and lidar_dist > 0.3:
                 det.distance_m = lidar_dist
-                det.source = "LiDAR"
-            else:
-                det.source = "Camera (Monocular)"
             fused_detections.append(det)
 
         # 3. Update Multi-Object Tracker with Fused Kinematics
         confirmed_tracks = tracker.update(fused_detections, dt=1.0/fps_video)
 
         # 4. Evaluate Safety Decision Engine (R1-R7)
-        decision = decision_engine.process(confirmed_tracks, frame_index=frame_idx, fps=fps_video)
+        decision = decision_engine.process(None, confirmed_tracks, detection_age_s=0.0)
 
         # -------------------------------------------------------------------
         # Render Multi-Sensor Dashboard HUD
