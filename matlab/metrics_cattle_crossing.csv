@@ -1,18 +1,18 @@
 metric,value,unit
 scenario,cattle_crossing,
-timestamp,2026-08-30 01:31:42,
-duration_s,20.76,s
-distance_m,158.68,m
-mean_speed_kmh,27.52,km/h
-max_speed_kmh,50.04,km/h
-path_smoothness,0.00125,rad/m
-lateral_rms_m,0.255,m
-min_clearance_m,2.01,m
+timestamp,2026-08-30 14:48:02,
+duration_s,27.26,s
+distance_m,155.92,m
+mean_speed_kmh,20.59,km/h
+max_speed_kmh,24.98,km/h
+path_smoothness,0.00021,rad/m
+lateral_rms_m,0.122,m
+min_clearance_m,3.01,m
 collisions,0,count
-n_replans,61,count
-mean_replan_ms,1.02,ms
-p95_replan_ms,1.77,ms
-max_decel_mps2,6.500,m/s2
-idle_fraction,0.187,frac
-proceed_fraction,0.671,frac
+n_replans,6,count
+mean_replan_ms,1.21,ms
+p95_replan_ms,2.45,ms
+max_decel_mps2,3.500,m/s2
+idle_fraction,0.000,frac
+proceed_fraction,0.932,frac
 scenario_completed,1,bool

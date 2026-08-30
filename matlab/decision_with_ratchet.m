@@ -114,7 +114,7 @@ else
 end
 
 % 7. Map committed_level to target_speed
-speed_map = [13.9, 11.1, 7.0, 2.5, 0.0]; % PROCEED=50, CAUTION=40, SLOW=25, BRAKE=9, ESTOP=0 km/h
+speed_map = [6.94, 5.0, 3.33, 1.11, 0.0]; % PROCEED=25, CAUTION=18, SLOW=12, BRAKE=4, ESTOP=0 km/h
 target_speed = speed_map(committed_level + 1);
 
 % 8. Map committed_level to rule_id

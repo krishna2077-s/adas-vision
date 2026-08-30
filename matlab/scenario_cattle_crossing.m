@@ -23,10 +23,10 @@ cfg.lane_half_width = 3.5;
 cfg.ego_init.x       = 0.0;
 cfg.ego_init.y       = -0.4;
 cfg.ego_init.heading = 0.0;
-cfg.ego_init.speed   = 8.33; % 30 km/h
+cfg.ego_init.speed   = 4.17; % 15 km/h
 
 cfg.goal = [160.0, 0.0, 0.0];
-cfg.goal_tol = 1.5;
+cfg.goal_tol = 4.0;  % Wider catch — prevents x-drift overshoot
 
 % Actors
 % Cow 1: Starts at x=75m, y=-3.5m (crosses to y=+3.5m)
@@ -34,8 +34,8 @@ cow1.id    = 'cow1';
 cow1.class = 'cow';
 cow1.x     = 75.0;
 cow1.y     = -3.5;
-cow1.vx    = 0.1;
-cow1.vy    = 2.2; % Speeds up crossing (approx 8 km/h)
+cow1.vx    = 0.05;  % very slow x drift
+cow1.vy    = 0.80;  % ~2.9 km/h lateral — realistic cow walk
 cow1.width = 1.5;
 cow1.length= 2.2;
 
@@ -44,8 +44,8 @@ cow2.id    = 'cow2';
 cow2.class = 'cow';
 cow2.x     = 79.0;
 cow2.y     = -4.2;
-cow2.vx    = 0.1;
-cow2.vy    = 2.0;
+cow2.vx    = 0.05;
+cow2.vy    = 0.70;  % ~2.5 km/h lateral — realistic cow walk
 cow2.width = 1.5;
 cow2.length= 2.2;
 

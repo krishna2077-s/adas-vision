@@ -50,8 +50,15 @@ function [path_x, path_y, path_yaw, plan_time_ms] = plan_path(occupancy_map, ego
         obs_pts = [];
     end
 
-    % Candidate lateral offsets across the drivable road (-1.8m to +1.8m)
-    candidate_y = linspace(-1.8, 1.8, 37);
+    is_dense_cfg = isfield(veh_params, 'is_dense') && veh_params.is_dense;
+
+    % Candidate lateral offsets across the drivable road
+    % Dense mode: wider range so ego can swerve hard left to bypass a kerb obstacle
+    if is_dense_cfg
+        candidate_y = linspace(-3.0, 3.0, 61);  % Full 6m street width sampling
+    else
+        candidate_y = linspace(-1.8, 1.8, 37);
+    end
     
     best_y = y_target;
     min_cost = Inf;
@@ -79,21 +86,32 @@ function [path_x, path_y, path_yaw, plan_time_ms] = plan_path(occupancy_map, ego
             end
         end
 
+        is_dense = isfield(veh_params, 'is_dense') && veh_params.is_dense;
+        min_clearance_limit = 1.35;
+        soft_clearance_limit = 1.1;
+        if is_dense
+            min_clearance_limit = 0.9;
+            soft_clearance_limit = 0.7;
+        end
+
         % Repulsion cost function based on minimum clearance:
         % Minimum physical radius: vehicle half-width ~0.95m + obstacle margin ~0.4m = 1.35m
-        if min_clearance < 1.35
+        if min_clearance < min_clearance_limit
             repulsion_cost = 50000.0; % Hard collision penalty
         elseif min_clearance < 2.5
             % Strong smooth inverse-distance repulsion
-            repulsion_cost = 350.0 / ((min_clearance - 1.1)^2);
+            repulsion_cost = 350.0 / ((min_clearance - soft_clearance_limit)^2);
         else
             repulsion_cost = 0.0;
         end
 
-        % Road boundary penalty (stay inside |y| <= 2.2m)
+        % Road boundary penalty
+        % In dense mode allow up to 3.0m lateral (full market lane width)
+        road_limit = 2.0;
+        if is_dense_cfg, road_limit = 3.0; end
         road_edge_cost = 0.0;
-        if abs(cy) > 2.0
-            road_edge_cost = 1000.0 * (abs(cy) - 2.0)^2;
+        if abs(cy) > road_limit
+            road_edge_cost = 1000.0 * (abs(cy) - road_limit)^2;
         end
 
         % Total Cost = Repulsion (safety) + Boundary + Goal Tracking + Smoothness

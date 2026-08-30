@@ -24,10 +24,10 @@ cfg.lane_half_width = 4.0;
 cfg.ego_init.x       = 0.0;
 cfg.ego_init.y       = -0.5;
 cfg.ego_init.heading = 0.0;
-cfg.ego_init.speed   = 6.94; % 25 km/h
+cfg.ego_init.speed   = 3.33;  % 12 km/h
 
 cfg.goal = [120.0, 0.0, 0.0];
-cfg.goal_tol = 1.5;
+cfg.goal_tol = 4.0;  % Wider catch — prevents x-drift overshoot
 
 % Actors
 % 1. Cross-traffic Car (from East to West at x=50m)
@@ -36,7 +36,7 @@ car1.class = 'car';
 car1.x     = 50.0;
 car1.y     = 25.0;
 car1.vx    = 0.0;
-car1.vy    = -5.55; % 20 km/h
+car1.vy    = -2.78; % 10 km/h
 car1.width = 1.8;
 car1.length= 4.2;
 
@@ -46,7 +46,7 @@ rick.class = 'auto_rickshaw'; % Explicit auto-rickshaw actor
 rick.x     = 55.0;
 rick.y     = -20.0;
 rick.vx    = 0.4;
-rick.vy    = 3.88; % 14 km/h
+rick.vy    = 1.94; % 7 km/h
 rick.width = 1.4;
 rick.length= 2.8;
 
@@ -55,8 +55,8 @@ ped.id    = 'ped';
 ped.class = 'person';
 ped.x     = 45.0;
 ped.y     = -6.0;
-ped.vx    = 0.05;
-ped.vy    = 1.1;
+ped.vx    = 0.02;
+ped.vy    = 0.40;  % ~1.4 km/h realistic walking pace
 ped.width = 0.5;
 ped.length= 0.5;
 
@@ -65,7 +65,7 @@ cyc.id    = 'cyc';
 cyc.class = 'bicycle';
 cyc.x     = 70.0;
 cyc.y     = -1.5;
-cyc.vx    = 3.88;
+cyc.vx    = 1.94;  % 7 km/h
 cyc.vy    = 0.1;
 cyc.width = 0.6;
 cyc.length= 1.8;

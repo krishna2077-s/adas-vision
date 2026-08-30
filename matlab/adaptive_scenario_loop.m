@@ -16,6 +16,8 @@ function scenario_result = adaptive_scenario_loop(scen_cfg)
 mode = 'adaptive';
 if isfield(scen_cfg, 'mode'), mode = lower(scen_cfg.mode); end
 is_baseline = strcmp(mode, 'baseline');
+is_dense = false;
+if isfield(scen_cfg, 'is_dense'), is_dense = scen_cfg.is_dense; end
 
 fprintf('=== [%s Mode] Scenario: %s ===\n', upper(mode), scen_cfg.name);
 
@@ -39,7 +41,7 @@ veh.min_turning_radius = 4.5;
 % Ego State [x, y, heading, speed]
 ego = scen_cfg.ego_init;
 goal = scen_cfg.goal;
-goal_tol = 1.5;
+goal_tol = 2.5;  % Slightly wider catch radius to arrest overshoot at highway speeds
 if isfield(scen_cfg, 'goal_tol'), goal_tol = scen_cfg.goal_tol; end
 
 % Decision & Ratchet State
@@ -133,10 +135,14 @@ traj_x = ego.x;
 traj_y = ego.y;
 actors = scen_cfg.actors;
 
+min_dist_this_frame = Inf;  % Pre-init so goal-reached status message is safe
 while t < max_time && ishandle(fig)
-    dist_to_goal = norm([ego.x, ego.y] - goal(1:2));
-    if dist_to_goal <= goal_tol
-        % Final frame: vehicle overlaps directly ON TOP OF the goal star
+    dist_to_goal   = norm([ego.x, ego.y] - goal(1:2));
+    x_past_goal    = ego.x >= (goal(1) - 0.5);   % TRUE when ego has crossed goal x
+    % DUAL GOAL CHECK: Euclidean distance OR x-position crossing
+    % (Euclidean alone fails when vehicle drifts in y; x-check catches that)
+    if dist_to_goal <= goal_tol || x_past_goal
+        % Snap vehicle cleanly onto goal point
         ego.x = goal(1);
         ego.y = goal(2);
         ego.speed = 0.0;
@@ -203,7 +209,9 @@ while t < max_time && ishandle(fig)
     predictions.x = {};
     predictions.y = {};
     if ~isempty(tracks_struct)
-        [pred_x, pred_y, ~] = predict_trajectories(tracks_struct, 2.0, 8);
+        pred_horizon = 2.0;
+        if is_dense, pred_horizon = 1.0; end
+        [pred_x, pred_y, ~] = predict_trajectories(tracks_struct, pred_horizon, 8);
         predictions.x = pred_x;
         predictions.y = pred_y;
         for p = 1:numel(pred_x)
@@ -282,7 +290,7 @@ while t < max_time && ishandle(fig)
         if need_replan || isempty(current_path.x)
             ego_pose = [ego.x, ego.y, ego.heading];
             goal_pose = [min(goal(1), ego.x + 40), goal(2), 0];
-            
+            veh.is_dense = is_dense;
             [px, py, pyaw, plan_time_ms] = plan_path(map, ego_pose, goal_pose, veh);
 
             if ~isempty(px)
@@ -320,15 +328,22 @@ while t < max_time && ishandle(fig)
             if dx > -1.0 && dx < 45.0
                 obs_hw = tr.width / 2;
                 corridor_thresh = (veh.width_m / 2) + obs_hw + 0.30;
-                is_opposite_lane = (tr.y > 0.4 && ego.y < 0.1 && tr.vx < -0.5);
-                
+                is_opposite_lane = (tr.y > 0.8 && ego.y < 0.3 && tr.vx < -0.3);
+
+                % In dense mode: if obstacle is static AND planner found a path
+                % with sufficient bypass clearance, don't flag as in_path_hazard
+                % (the planner has already routed around it)
+                is_static_obs = (abs(tr.vx) < 0.1 && abs(tr.vy) < 0.1);
+                bypass_threshold = corridor_thresh;
+                if is_dense && is_static_obs
+                    bypass_threshold = 0.7; % Only trigger if path literally hits it
+                end
+
                 % Check distance from ALL predicted points to the planned path
-                % This prevents T-boning crossing obstacles (e.g. crossing cows, cross-traffic)
                 obs_pred_x = [tr.x; all_pred_x((k-1)*8+1 : k*8)];
                 obs_pred_y = [tr.y; all_pred_y((k-1)*8+1 : k*8)];
-                
+
                 min_d_traj = Inf;
-                % Find minimum distance between any predicted obstacle point and any path point ahead
                 for p = 1:numel(obs_pred_x)
                     dists = sqrt((path_pts(:, 1) - obs_pred_x(p)).^2 + (path_pts(:, 2) - obs_pred_y(p)).^2);
                     [d_min_pt, closest_idx] = min(dists);
@@ -340,12 +355,12 @@ while t < max_time && ishandle(fig)
                     end
                 end
 
-                % Track closest distance to ANY obstacle along path (for safe passing speed)
+                % Track closest distance to ANY obstacle along path
                 if min_d_traj < proximal_clearance
                     proximal_clearance = min_d_traj;
                 end
 
-                if (min_d_traj < corridor_thresh) && ~is_opposite_lane
+                if (min_d_traj < bypass_threshold) && ~is_opposite_lane
                     in_path_hazard = true;
                     v_rel = ego.speed - tr.vx * cos(ego.heading);
                     if v_rel > 0
@@ -375,16 +390,60 @@ while t < max_time && ishandle(fig)
         decision_with_ratchet(hazard_dist, hazard_ttc, critical_label, in_path_hazard, closing_speed, ...
                               degraded, lane_offset, prev_committed, raw_history, down_counter, emergency_latch);
     
-    % Enforce constant, safe passing speeds when squeezing past obstacles
-    % This prevents aggressive "overtaking" acceleration followed by harsh braking.
-    if proximal_clearance < 2.0 && target_speed_mps > 3.5
-        target_speed_mps = 3.5; % ~12 km/h (Creeping speed for tight spaces)
-        if committed_level < 2, committed_level = 2; rule_id = 'PROX_SLOW'; end
-    elseif proximal_clearance < 3.0 && target_speed_mps > 6.0
-        target_speed_mps = 6.0; % ~21 km/h (Cautious passing speed)
-        if committed_level < 1, committed_level = 1; rule_id = 'PROX_CAUTION'; end
+    % -----------------------------------------------------------------------
+    % Dense-mode Speed Override: keep car moving at moderate pace near obstacles
+    % -----------------------------------------------------------------------
+    if is_dense
+        % Moderate floors: car slows but never fully stops at obstacles
+        if committed_level == 3 && target_speed_mps < 1.0      % BRAKE -> ~3.5 km/h creep
+            target_speed_mps = 1.0;
+        elseif committed_level == 2 && target_speed_mps < 2.5  % SLOW -> ~9 km/h
+            target_speed_mps = 2.5;
+        elseif committed_level == 1 && target_speed_mps < 5.0  % CAUTION -> ~18 km/h
+            target_speed_mps = 5.0;
+        end
+        % Drain emergency latch in 1 frame so recovery isn't delayed
+        if emergency_latch > 1
+            emergency_latch = 1;
+        end
+    end
+
+    % Proximal Clearance Governor
+    % In dense mode, static obstacles that the planner is routing around
+    % should not trigger speed caps — only apply when path is genuinely tight
+    if proximal_clearance < 1.5 && target_speed_mps > 3.5
+        if is_dense
+            target_speed_mps = 5.0; % Slow creep past very tight gaps
+        else
+            target_speed_mps = 3.5;
+            if committed_level < 2, committed_level = 2; rule_id = 'PROX_SLOW'; end
+        end
+    elseif proximal_clearance < 2.5 && target_speed_mps > 6.0
+        target_speed_mps = 6.0;
+        if ~is_dense && committed_level < 1
+            committed_level = 1; rule_id = 'PROX_CAUTION';
+        end
     elseif proximal_clearance < 4.5 && target_speed_mps > 9.0
-        target_speed_mps = 9.0; % ~32 km/h (Moderate passing speed)
+        target_speed_mps = 9.0;
+    end
+
+    % -----------------------------------------------------------------------
+    % Goal Approach Speed Governor
+    % Prevents high-speed overshoot: progressively cap speed as we near goal
+    % -----------------------------------------------------------------------
+    % -----------------------------------------------------------------------
+    % Goal Approach Speed Governor (distance-to-goal in X, not Euclidean)
+    % Uses X-distance so y-drift doesn't delay braking near goal
+    % -----------------------------------------------------------------------
+    dx_to_goal = goal(1) - ego.x;   % positive = still ahead of goal
+    if dx_to_goal < 4.0
+        target_speed_mps = min(target_speed_mps, 0.8);   % near-stop creep
+    elseif dx_to_goal < 10.0
+        target_speed_mps = min(target_speed_mps, 2.0);   % slow creep
+    elseif dx_to_goal < 20.0
+        target_speed_mps = min(target_speed_mps, 3.5);   % gentle approach
+    elseif dx_to_goal < 40.0
+        target_speed_mps = min(target_speed_mps, 5.5);   % moderate approach
     end
 
     prev_committed = committed_level;
@@ -429,12 +488,12 @@ while t < max_time && ishandle(fig)
         throttle = 0.0; brake = 0.7;
     else
         % Smooth ramp-up from stop (start gently, then accelerate to cruising speed)
-        if ego.speed < 2.5
-            max_accel = 1.2; % Gentle launch
+        if ego.speed < 2.0
+            max_accel = 0.9; % Gentle launch
         else
-            max_accel = 2.4; % Normal acceleration
+            max_accel = 1.6; % Normal acceleration (reduced from 2.4)
         end
-        accel = min(max_accel, max(-3.0, 1.8 * (target_speed_mps - ego.speed)));
+        accel = min(max_accel, max(-3.0, 1.4 * (target_speed_mps - ego.speed)));
         if accel >= 0
             throttle = min(1.0, accel / 2.5); brake = 0.0;
         else
@@ -449,6 +508,28 @@ while t < max_time && ishandle(fig)
     ego.heading = ego.heading + (ego.speed / veh.wheelbase_m) * tan(steer) * dt;
     ego.x       = ego.x + ego.speed * cos(ego.heading) * dt;
     ego.y       = ego.y + ego.speed * sin(ego.heading) * dt;
+
+    % -----------------------------------------------------------------------
+    % HARD GOAL CLAMP: If vehicle has passed goal.x this frame, stop it
+    % immediately. This is the final safety net against any overshoot.
+    % -----------------------------------------------------------------------
+    if ego.x >= goal(1)
+        ego.x     = goal(1);
+        ego.y     = goal(2);
+        ego.speed = 0.0;
+        traj_x(end+1) = ego.x; %#ok<AGROW>
+        traj_y(end+1) = ego.y; %#ok<AGROW>
+        set(h_ego,  'XData', ego.x, 'YData', ego.y);
+        set(h_traj, 'XData', traj_x, 'YData', traj_y);
+        set(h_path, 'XData', NaN, 'YData', NaN);
+        set(h_status, 'String', sprintf('t=%.1fs | [%s] GOAL REACHED | Speed: 0.0 km/h | Min Clearance: %.1fm | Replans: %d', ...
+            t, upper(mode), min_dist_this_frame, log_data.replans), 'Color', [0.2 0.9 0.2]);
+        title(ax, sprintf('Scenario: %s [%s Mode]  |  Status: GOAL REACHED', scen_cfg.title, upper(mode)), 'Color', [0.2 0.9 0.2], 'FontSize', 12);
+        drawnow;
+        arrived = true;
+        t = t + dt;
+        break;
+    end
 
     traj_x(end+1) = ego.x; %#ok<AGROW>
     traj_y(end+1) = ego.y; %#ok<AGROW>

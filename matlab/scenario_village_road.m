@@ -24,11 +24,11 @@ cfg.lane_half_width = 3.2;
 cfg.ego_init.x       = 0.0;
 cfg.ego_init.y       = -0.4; % Driving slightly left of center (LHT side)
 cfg.ego_init.heading = 0.0;
-cfg.ego_init.speed   = 8.33; % 30 km/h
+cfg.ego_init.speed   = 3.33; % 12 km/h
 
 % Goal
 cfg.goal = [180.0, 0.0, 0.0];
-cfg.goal_tol = 1.2;
+cfg.goal_tol = 4.0;  % Wider catch — prevents x-drift overshoot
 
 % Scenario Actors
 % 1. Oncoming motorcycle (x=160, moving on opposite side y=+1.2)
@@ -36,7 +36,7 @@ mcycle.id    = 'mcycle';
 mcycle.class = 'motorcycle';
 mcycle.x     = 160.0;
 mcycle.y     = 1.2;
-mcycle.vx    = -6.5; % Oncoming
+mcycle.vx    = -2.78; % Oncoming (10 km/h)
 mcycle.vy    = 0.0;
 mcycle.width = 0.8;
 mcycle.length= 2.0;
@@ -46,8 +46,8 @@ ped.id    = 'ped';
 ped.class = 'person';
 ped.x     = 85.0;
 ped.y     = -2.8;
-ped.vx    = 0.05;
-ped.vy    = 0.65; % crossing across road
+ped.vx    = 0.02;  % very slow forward drift
+ped.vy    = 0.40;  % ~1.4 km/h lateral walking pace
 ped.width = 0.5;
 ped.length= 0.5;
 

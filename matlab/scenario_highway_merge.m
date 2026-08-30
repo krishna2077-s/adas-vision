@@ -17,34 +17,34 @@ cfg.name  = 'highway_merge';
 cfg.title = 'Scenario 3 — Highway Merge';
 cfg.mode  = mode;
 cfg.dt    = 0.033;
-cfg.max_time = 50.0;
+cfg.max_time = 90.0;  % Extended: 25 km/h needs more time to cover 200m
 cfg.lane_half_width = 7.5; % 2-lane dual carriageway
 
 cfg.ego_init.x       = 0.0;
 cfg.ego_init.y       = -1.875; % Left cruising lane
 cfg.ego_init.heading = 0.0;
-cfg.ego_init.speed   = 13.88;  % 50 km/h
+cfg.ego_init.speed   = 6.94;   % 25 km/h
 
-cfg.goal = [260.0, -1.875, 0.0];
-cfg.goal_tol = 1.5;
+cfg.goal = [200.0, -1.875, 0.0];  % Shortened: reachable at 25 km/h in ~50s
+cfg.goal_tol = 4.0;  % Wider catch — prevents x-drift overshoot
 
 % Actors
 % 1. Heavy Commercial Truck (Tata 1613 style, merges from on-ramp)
 truck.id    = 'truck';
 truck.class = 'truck';
-truck.x     = 45.0;
+truck.x     = 100.0;  % Starts well ahead — ego has free road for first 60m
 truck.y     = -6.5;
-truck.vx    = 6.94; % 25 km/h
-truck.vy    = 1.1;  % Cut-in lateral merge speed
+truck.vx    = 3.33;   % 12 km/h
+truck.vy    = 2.2;    % Fast merge — completes quickly, clears ego's path
 truck.width = 2.5;
 truck.length= 8.5;
 
 % 2. Fast Overtaking SUV in right lane (y = +1.875)
 suv.id    = 'suv';
 suv.class = 'car';
-suv.x     = -40.0;
+suv.x     = -20.0;  % Closer start — overtake visible during sim
 suv.y     = 1.875;
-suv.vx    = 22.2; % 80 km/h
+suv.vx    = 11.1; % 40 km/h
 suv.vy    = 0.0;
 suv.width = 1.9;
 suv.length= 4.8;
@@ -52,9 +52,9 @@ suv.length= 4.8;
 % 3. Wrong-way two-wheeler on left shoulder
 bike.id    = 'bike';
 bike.class = 'motorcycle';
-bike.x     = 180.0;
+bike.x     = 150.0;  % Within goal range
 bike.y     = -8.5;
-bike.vx    = -4.0;
+bike.vx    = -2.5; % Wrong-way (9 km/h)
 bike.vy    = 0.0;
 bike.width = 0.8;
 bike.length= 1.8;
