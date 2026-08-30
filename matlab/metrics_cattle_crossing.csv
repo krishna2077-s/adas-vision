@@ -1,0 +1,18 @@
+metric,value,unit
+scenario,cattle_crossing,
+timestamp,2026-08-30 00:57:34,
+duration_s,2.31,s
+distance_m,29.70,m
+mean_speed_kmh,46.07,km/h
+max_speed_kmh,49.88,km/h
+path_smoothness,0.00000,rad/m
+lateral_rms_m,0.000,m
+min_clearance_m,45.60,m
+collisions,0,count
+n_replans,8,count
+mean_replan_ms,0.14,ms
+p95_replan_ms,0.69,ms
+max_decel_mps2,0.000,m/s2
+idle_fraction,0.000,frac
+proceed_fraction,1.000,frac
+scenario_completed,0,bool

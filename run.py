@@ -67,7 +67,12 @@ if __name__ == "__main__":
         runpy.run_path(str(ROOT / "evaluation" / "safety_audit.py"),
                        run_name="__main__")
 
+    elif subcmd == "lidar":
+        import runpy
+        runpy.run_path(str(ROOT / "simulation" / "lidar_camera_fusion.py"),
+                       run_name="__main__")
+
     else:
         print(f"Unknown subcommand: {subcmd!r}")
-        print("Valid subcommands: main | bridge | demo | test | audit")
+        print("Valid subcommands: main | bridge | demo | test | audit | lidar")
         sys.exit(1)

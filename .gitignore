@@ -58,6 +58,7 @@ desktop.ini
 # Datasets and extracted files
 *.zip
 GTSRB_extracted/
+b576050080/
 
 # IDEs and environments
 .vscode/
