@@ -1,6 +1,6 @@
 scenario,duration_s,distance_m,path_smoothness,collisions,mean_replan_ms,status
-village_road,32.80,176.05,0.0029,0,1.81,PASS
-urban_intersection,27.89,116.38,0.0026,0,0.81,PASS
-highway_merge,36.86,197.82,0.0036,0,0.98,PASS
-dense_market,33.50,80.04,0.0029,0,1.27,PASS
-cattle_crossing,27.26,155.92,0.0002,0,1.21,PASS
+village_road,33.76,175.81,0.0011,0,7.57,PASS
+urban_intersection,25.91,115.81,0.0008,0,1.76,PASS
+highway_merge,37.39,197.37,0.0050,0,2.97,PASS
+dense_market,26.83,79.94,0.0007,0,3.24,PASS
+cattle_crossing,27.26,155.74,0.0018,0,1.99,PASS

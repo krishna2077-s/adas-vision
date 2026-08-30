@@ -11,15 +11,15 @@ raw_level = PROCEED;
 raw_rule_id = 'R7';
 
 if in_path
-    if nearest_dist <= 1.2
+    if nearest_dist <= 8.0
         raw_level = EMERGENCY_STOP; raw_rule_id = 'R1';
-    elseif ttc <= 0.9
-        raw_level = EMERGENCY_STOP; raw_rule_id = 'R2/R3';
     elseif ttc <= 1.8
+        raw_level = EMERGENCY_STOP; raw_rule_id = 'R2/R3';
+    elseif ttc <= 3.0 || nearest_dist <= 15.0
         raw_level = BRAKE; raw_rule_id = 'R4/R5';
-    elseif nearest_dist <= 6.0
+    elseif nearest_dist <= 25.0
         raw_level = SLOW; raw_rule_id = 'R6';
-    elseif nearest_dist <= 15.0
+    elseif nearest_dist <= 40.0
         raw_level = CAUTION; raw_rule_id = 'R7';
     end
 else
@@ -75,9 +75,11 @@ else
     down_counter = 0;
 end
 
-% 4. VRU proximity floor (only when in path)
+% 4. VRU proximity floor
 is_vru = contains(lower(obj_class), {'person','bicycle','cow','dog','cat'});
-if is_vru && in_path && nearest_dist <= 6
+if is_vru && nearest_dist <= 8.0
+    voted_level = max(voted_level, BRAKE);
+elseif is_vru && in_path && nearest_dist <= 15.0
     voted_level = max(voted_level, CAUTION);
 end
 
@@ -114,7 +116,7 @@ else
 end
 
 % 7. Map committed_level to target_speed
-speed_map = [6.94, 5.0, 3.33, 1.11, 0.0]; % PROCEED=25, CAUTION=18, SLOW=12, BRAKE=4, ESTOP=0 km/h
+speed_map = [13.89, 9.72, 5.56, 2.22, 0.0]; % PROCEED=50, CAUTION=35, SLOW=20, BRAKE=8, ESTOP=0 km/h
 target_speed = speed_map(committed_level + 1);
 
 % 8. Map committed_level to rule_id

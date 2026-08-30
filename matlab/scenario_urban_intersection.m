@@ -24,7 +24,7 @@ cfg.lane_half_width = 4.0;
 cfg.ego_init.x       = 0.0;
 cfg.ego_init.y       = -0.5;
 cfg.ego_init.heading = 0.0;
-cfg.ego_init.speed   = 3.33;  % 12 km/h
+cfg.ego_init.speed   = 6.94;  % 25 km/h — realistic urban approach speed
 
 cfg.goal = [120.0, 0.0, 0.0];
 cfg.goal_tol = 4.0;  % Wider catch — prevents x-drift overshoot
@@ -36,7 +36,7 @@ car1.class = 'car';
 car1.x     = 50.0;
 car1.y     = 25.0;
 car1.vx    = 0.0;
-car1.vy    = -2.78; % 10 km/h
+car1.vy    = -6.94; % 25 km/h cross-traffic
 car1.width = 1.8;
 car1.length= 4.2;
 
@@ -46,7 +46,7 @@ rick.class = 'auto_rickshaw'; % Explicit auto-rickshaw actor
 rick.x     = 55.0;
 rick.y     = -20.0;
 rick.vx    = 0.4;
-rick.vy    = 1.94; % 7 km/h
+rick.vy    = 4.17; % 15 km/h rickshaw
 rick.width = 1.4;
 rick.length= 2.8;
 
@@ -56,7 +56,7 @@ ped.class = 'person';
 ped.x     = 45.0;
 ped.y     = -6.0;
 ped.vx    = 0.02;
-ped.vy    = 0.40;  % ~1.4 km/h realistic walking pace
+ped.vy    = 0.70;  % ~2.5 km/h — clears road before ego arrives at x=45
 ped.width = 0.5;
 ped.length= 0.5;
 
@@ -65,7 +65,7 @@ cyc.id    = 'cyc';
 cyc.class = 'bicycle';
 cyc.x     = 70.0;
 cyc.y     = -1.5;
-cyc.vx    = 1.94;  % 7 km/h
+cyc.vx    = 4.17;  % 15 km/h — realistic cyclist speed
 cyc.vy    = 0.1;
 cyc.width = 0.6;
 cyc.length= 1.8;
@@ -81,8 +81,32 @@ end
 % Helper Functions
 % ---------------------------------------------------------------------------
 function act = update_intersection_actors(act, t, dt)
-    act.x = act.x + act.vx * dt;
-    act.y = act.y + act.vy * dt;
+    if strcmp(act.id, 'car1')
+        % Cross-traffic car: moves South-West, clears road (y < -30 is off screen)
+        if act.y > -30.0
+            act.x = act.x + act.vx * dt;
+            act.y = act.y + act.vy * dt;
+        end
+    elseif strcmp(act.id, 'rick')
+        % Rickshaw: enters from South, clears road once it's past the ego path (y > 6.0)
+        if act.y < 8.0
+            act.x = act.x + act.vx * dt;
+            act.y = act.y + act.vy * dt;
+        end
+    elseif strcmp(act.id, 'ped')
+        % Pedestrian: crosses from left to right, walks fully off road (y > 8.0)
+        if act.y < 8.0
+            act.x = act.x + act.vx * dt;
+            act.y = act.y + act.vy * dt;
+        end
+    elseif strcmp(act.id, 'cyc')
+        % Cyclist: proceeds through intersection, goes off screen to the right
+        act.x = act.x + act.vx * dt;
+        act.y = act.y + act.vy * dt;
+    else
+        act.x = act.x + act.vx * dt;
+        act.y = act.y + act.vy * dt;
+    end
 end
 
 function draw_intersection_background(ax, lw)

@@ -24,7 +24,7 @@ cfg.lane_half_width = 3.5; % 3.5m half width (7m total street)
 cfg.ego_init.x       = 0.0;
 cfg.ego_init.y       = 0.0;
 cfg.ego_init.heading = 0.0;
-cfg.ego_init.speed   = 1.39; % 5 km/h creeping speed
+cfg.ego_init.speed   = 2.78; % 10 km/h — congested market crawl
 
 cfg.goal = [85.0, 0.0, 0.0];
 cfg.goal_tol = 5.0;
@@ -61,13 +61,12 @@ ped2.vy    = 0.50; % ~1.8 km/h darting child jog
 ped2.width = 0.5;
 ped2.length= 0.5;
 
-% 4. Oncoming Scooter — comes from bottom (wrong/oncoming side), brakes near pushcart,
-%    then edges further negative y to squeeze past and continue
+% 4. Oncoming Scooter — starts behind pushcart, swerves to center to overtake
 scoot.id    = 'scoot';
 scoot.class = 'motorcycle';
-scoot.x     = 78.0;   % Starts closer so interaction is visible
-scoot.y     = -1.2;   % Comes from BOTTOM side (original wrong/oncoming side)
-scoot.vx    = -2.0;   % ~7 km/h approaching
+scoot.x     = 78.0;   
+scoot.y     = -2.5;   % Starts in the same lane as the pushcart
+scoot.vx    = -4.17;  % ~15 km/h oncoming scooter
 scoot.vy    =  0.0;
 scoot.width = 0.8;
 scoot.length= 1.8;
@@ -84,43 +83,33 @@ end
 % ---------------------------------------------------------------------------
 function act = update_market_actors(act, t, dt)
     if strcmp(act.id, 'ped1')
-        % Pedestrian 1 crosses from t=0.5s until it reaches the right side
-        if t >= 0.5 && act.y > -2.6
+        % Pedestrian 1 crosses from left stall to right — walk fully off the road
+        if t >= 0.5 && act.y > -8.0
             act.x = act.x + act.vx * dt;
             act.y = act.y + act.vy * dt;
         end
     elseif strcmp(act.id, 'ped2')
-        % Pedestrian 2 darts out from behind pushcart at t=4s
-        if t >= 4.0 && act.y < 2.6
+        % Pedestrian 2 darts out from behind pushcart at t=4s — walk fully off the road
+        if t >= 4.0 && act.y < 8.0
             act.x = act.x + act.vx * dt;
             act.y = act.y + act.vy * dt;
         end
     elseif strcmp(act.id, 'scoot')
-        % Scooter behaviour (coming from BOTTOM / negative y side):
-        %   Phase 1: Approaching — decelerate when near pushcart front
-        %   Phase 2: Brake      — slow to near stop before obstacle
-        %   Phase 3: Bypass    — edges further negative y (hugs bottom kerb) to pass
-        pushcart_front_x = 37.0;
-        brake_zone_x     = 35.5;
+        % Scooter: swerve to the positive-y side of the road (y = +1.8) to avoid ego at y=0
+        overtake_start_x = 48.0;
 
-        if act.x > pushcart_front_x
-            % Normal approach from right side
+        if act.x > overtake_start_x
+            % Approaching straight
             act.x = act.x + act.vx * dt;
-        elseif act.x > brake_zone_x
-            % Decelerate smoothly
-            act.vx = act.vx * 0.93;
-            act.x  = act.x + act.vx * dt;
         else
-            % Bypass: edge further into negative y (away from pushcart at y=-2.5)
-            % Pushcart is at y=-2.5, so bike squeezes between pushcart & kerb edge
-            if act.y > -3.0
-                act.vy = -0.6;  % nudge downward (more negative y)
+            % Swerve to y = +1.8 (left side — away from ego near y=0 and pushcart at -2.5)
+            if act.y < 1.8
+                act.vy = 0.8; % Swerve towards positive-y side
             else
-                act.vy =  0.0;
+                act.vy = 0.0;
             end
-            act.vx = -1.5;  % creep past pushcart
-            act.x  = act.x + act.vx * dt;
-            act.y  = act.y + act.vy * dt;
+            act.x = act.x + act.vx * dt;
+            act.y = act.y + act.vy * dt;
         end
     else
         act.x = act.x + act.vx * dt;

@@ -17,14 +17,14 @@ cfg.name  = 'village_road';
 cfg.title = 'Scenario 1 — Unmarked Village Road';
 cfg.mode  = mode;
 cfg.dt    = 0.033;
-cfg.max_time = 50.0;
+cfg.max_time = 80.0;  % Extended to handle motorcycle + pushcart navigation sequence
 cfg.lane_half_width = 3.2;
 
 % Initial Ego Pose
 cfg.ego_init.x       = 0.0;
 cfg.ego_init.y       = -0.4; % Driving slightly left of center (LHT side)
 cfg.ego_init.heading = 0.0;
-cfg.ego_init.speed   = 3.33; % 12 km/h
+cfg.ego_init.speed   = 7.78; % 28 km/h — realistic village road cruise
 
 % Goal
 cfg.goal = [180.0, 0.0, 0.0];
@@ -35,8 +35,8 @@ cfg.goal_tol = 4.0;  % Wider catch — prevents x-drift overshoot
 mcycle.id    = 'mcycle';
 mcycle.class = 'motorcycle';
 mcycle.x     = 160.0;
-mcycle.y     = 1.2;
-mcycle.vx    = -2.78; % Oncoming (10 km/h)
+mcycle.y     = 2.2;  % Positioned well into the positive lane — wider separation from ego
+mcycle.vx    = -6.94; % Oncoming ~25 km/h
 mcycle.vy    = 0.0;
 mcycle.width = 0.8;
 mcycle.length= 2.0;
@@ -64,7 +64,7 @@ cart.length= 2.0;
 cfg.actors = {mcycle, ped, cart};
 
 % Actor dynamic motion callback
-cfg.update_actor = @(act, t, dt, ego) update_village_actors(act, t, dt);
+cfg.update_actor = @(act, t, dt, ego) update_village_actors(act, t, dt, ego);
 
 % Custom background graphics
 cfg.draw_background = @(ax) draw_village_background(ax, cfg.lane_half_width);
@@ -76,13 +76,57 @@ end
 % ---------------------------------------------------------------------------
 % Helper Functions
 % ---------------------------------------------------------------------------
-function act = update_village_actors(act, t, dt)
+function act = update_village_actors(act, t, dt, ego)
     if strcmp(act.id, 'ped')
-        % Pedestrian crosses road once t >= 1.2s
-        if t >= 1.2 && act.y < 3.2
+        % Pedestrian crosses road completely
+        if t >= 1.2 && act.y < 8.0
             act.y = act.y + act.vy * dt;
             act.x = act.x + act.vx * dt;
         end
+    elseif strcmp(act.id, 'mcycle')
+        % Reactive motorcycle: swerves to shoulder AND brakes when ego approaches.
+        % Combined half-widths: ego 0.925m + moto 0.4m = 1.325m physical min.
+        % Use 3.0m lateral threshold (generous margin) + 35m braking range.
+        COLLISION_LATERAL_THRESH = 3.0;
+        BRAKE_DIST = 35.0;
+        SHOULDER_Y  = 2.8; % Swerve target: near positive shoulder
+
+        ped_x = 85.0;
+        ped_y = -2.8;
+        if t >= 1.2
+            ped_y = min(8.0, ped_y + 0.40 * (t - 1.2));
+            ped_x = ped_x + 0.02 * (t - 1.2);
+        end
+        
+        target_vx = -6.94; % Nominal oncoming speed
+        target_vy  = 0.0;
+        
+        % Brake hard if pedestrian is directly in front
+        if (act.x > ped_x) && (act.x - ped_x < 15.0) && abs(act.y - ped_y) < 1.2
+            target_vx = 0.0;
+        end
+        
+        % Ego approaching: brake AND swerve to positive shoulder
+        if (act.x > ego.x) && (act.x - ego.x < BRAKE_DIST) && abs(act.y - ego.y) < COLLISION_LATERAL_THRESH
+            target_vx = 0.0;
+            % Swerve toward shoulder to maximise lateral gap
+            if act.y < SHOULDER_Y
+                target_vy = 1.0; % Move toward positive-y shoulder
+            else
+                target_vy = 0.0;
+            end
+        end
+        
+        % Strong braking: 12 m/s^2
+        if act.vx < target_vx
+            act.vx = min(target_vx, act.vx + 12.0 * dt);
+        elseif act.vx > target_vx
+            act.vx = max(target_vx, act.vx - 3.0 * dt);
+        end
+        act.vy = target_vy;
+        
+        act.x = act.x + act.vx * dt;
+        act.y = min(3.1, act.y + act.vy * dt); % Clamp within road boundary
     else
         act.x = act.x + act.vx * dt;
         act.y = act.y + act.vy * dt;

@@ -278,6 +278,14 @@ class ObjectDetector:
         half_width = int(cfg.PATH_CORRIDOR_MIN_PX +
                          depth_ratio * (cfg.PATH_CORRIDOR_MAX_PX - cfg.PATH_CORRIDOR_MIN_PX))
 
+        # Expand corridor by 50% for vulnerable classes to ensure we catch them stepping in
+        if det.label in cfg.VULNERABLE_CLASSES:
+            half_width = int(half_width * 1.5)
+        
+        # Expand corridor for anything dangerously close (< 10m)
+        if det.distance_m < 10.0:
+            half_width = int(half_width * 1.2)
+
         return abs(bx - lane_center_x) < half_width
 
     def _assess_risk(self, det: Detection) -> str:

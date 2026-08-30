@@ -78,53 +78,181 @@ event_log = {};
 last_logged_decision = '';
 
 % ---------------------------------------------------------------------------
-% 2. Setup Figure and Visualization
+% 2. Setup Figure and Visualization — Professional Google-Maps Style UI
 % ---------------------------------------------------------------------------
-fig_title = sprintf('ADAS Scenario — %s (%s)', scen_cfg.title, upper(mode));
-fig = figure('Name', fig_title, 'NumberTitle', 'off', 'Color', [0.06 0.06 0.10], ...
-             'Position', [60 100 1020 540]);
-ax  = axes('Parent', fig, 'Color', [0.12 0.12 0.16], ...
-           'XColor', 'w', 'YColor', 'w', 'GridColor', [0.25 0.25 0.35], 'GridAlpha', 0.4);
-hold(ax, 'on'); grid(ax, 'on');
-axis(ax, 'equal');
+fig_title = sprintf('ADAS Vision  —  %s  (%s Mode)', scen_cfg.title, upper(mode));
+fig = figure('Name', fig_title, 'NumberTitle', 'off', ...
+             'Color', [0.08 0.09 0.11], ...
+             'Position', [40 60 1380 700], ...
+             'MenuBar', 'none', 'ToolBar', 'none');
 
+% ---- Left: main map view (80% width) ----
+ax = axes('Parent', fig, ...
+          'Position', [0.01 0.04 0.68 0.88], ...
+          'Color', [0.11 0.13 0.15], ...
+          'XColor', [0.35 0.38 0.42], 'YColor', [0.35 0.38 0.42], ...
+          'GridColor', [0.20 0.22 0.26], 'GridAlpha', 0.5, ...
+          'FontSize', 8, 'FontName', 'Consolas', ...
+          'LineWidth', 0.8);
+hold(ax, 'on'); grid(ax, 'on'); axis(ax, 'equal');
+
+% ---- Right: HUD dashboard panel (annotation axes, fixed position) ----
+ax_hud = axes('Parent', fig, ...
+              'Position', [0.705 0.04 0.285 0.88], ...
+              'Color', [0.10 0.11 0.14], ...
+              'XColor', 'none', 'YColor', 'none', ...
+              'XLim', [0 1], 'YLim', [0 1]);
+hold(ax_hud, 'on');
+% Panel background card
+patch(ax_hud, [0 1 1 0], [0 0 1 1], [0.10 0.11 0.14], 'EdgeColor', [0.20 0.22 0.28], 'LineWidth', 1.5);
+
+% HUD: Title
+text(ax_hud, 0.5, 0.97, 'ADAS VISION', 'Units', 'normalized', ...
+     'HorizontalAlignment', 'center', 'Color', [0.4 0.75 1.0], ...
+     'FontSize', 13, 'FontWeight', 'bold', 'FontName', 'Consolas');
+text(ax_hud, 0.5, 0.93, upper(scen_cfg.title), 'Units', 'normalized', ...
+     'HorizontalAlignment', 'center', 'Color', [0.6 0.65 0.72], ...
+     'FontSize', 8, 'FontName', 'Consolas');
+% Separator line
+plot(ax_hud, [0.05 0.95], [0.905 0.905], 'Color', [0.25 0.28 0.35], 'LineWidth', 1);
+
+% HUD: Dynamic text handles
+h_hud_time  = text(ax_hud, 0.08, 0.875, 'TIME   0.0 s', 'Units', 'normalized', ...
+     'Color', [0.75 0.78 0.85], 'FontSize', 9, 'FontName', 'Consolas');
+h_hud_speed = text(ax_hud, 0.08, 0.830, 'SPEED  0.0 km/h', 'Units', 'normalized', ...
+     'Color', [0.2 0.95 0.5], 'FontSize', 11, 'FontWeight', 'bold', 'FontName', 'Consolas');
+h_hud_mode  = text(ax_hud, 0.08, 0.785, 'MODE   ADAPTIVE', 'Units', 'normalized', ...
+     'Color', [0.55 0.6 0.7], 'FontSize', 8, 'FontName', 'Consolas');
+plot(ax_hud, [0.05 0.95], [0.765 0.765], 'Color', [0.22 0.25 0.32], 'LineWidth', 0.8);
+
+% HUD: Decision level
+text(ax_hud, 0.08, 0.735, 'DECISION', 'Units', 'normalized', ...
+     'Color', [0.45 0.5 0.6], 'FontSize', 7, 'FontName', 'Consolas');
+h_hud_dec   = text(ax_hud, 0.08, 0.695, 'PROCEED', 'Units', 'normalized', ...
+     'Color', [0.2 0.9 0.3], 'FontSize', 14, 'FontWeight', 'bold', 'FontName', 'Consolas');
+h_hud_rule  = text(ax_hud, 0.08, 0.660, 'Rule: R7', 'Units', 'normalized', ...
+     'Color', [0.45 0.5 0.6], 'FontSize', 8, 'FontName', 'Consolas');
+plot(ax_hud, [0.05 0.95], [0.640 0.640], 'Color', [0.22 0.25 0.32], 'LineWidth', 0.8);
+
+% HUD: Clearance
+text(ax_hud, 0.08, 0.615, 'MIN CLEARANCE', 'Units', 'normalized', ...
+     'Color', [0.45 0.5 0.6], 'FontSize', 7, 'FontName', 'Consolas');
+h_hud_clr   = text(ax_hud, 0.08, 0.575, '--- m', 'Units', 'normalized', ...
+     'Color', [0.2 0.95 0.5], 'FontSize', 12, 'FontWeight', 'bold', 'FontName', 'Consolas');
+% Clearance bar background
+patch(ax_hud, [0.08 0.92 0.92 0.08], [0.548 0.548 0.565 0.565], [0.18 0.20 0.26], 'EdgeColor', 'none');
+h_hud_clrbar = patch(ax_hud, [0.08 0.50 0.50 0.08], [0.548 0.548 0.565 0.565], [0.2 0.85 0.4], 'EdgeColor', 'none');
+plot(ax_hud, [0.05 0.95], [0.530 0.530], 'Color', [0.22 0.25 0.32], 'LineWidth', 0.8);
+
+% HUD: Replans / Collisions
+text(ax_hud, 0.08, 0.505, 'REPLANS', 'Units', 'normalized', ...
+     'Color', [0.45 0.5 0.6], 'FontSize', 7, 'FontName', 'Consolas');
+h_hud_rep   = text(ax_hud, 0.08, 0.468, '0', 'Units', 'normalized', ...
+     'Color', [0.6 0.75 1.0], 'FontSize', 12, 'FontWeight', 'bold', 'FontName', 'Consolas');
+text(ax_hud, 0.55, 0.505, 'COLLISIONS', 'Units', 'normalized', ...
+     'Color', [0.45 0.5 0.6], 'FontSize', 7, 'FontName', 'Consolas');
+h_hud_col_cnt = text(ax_hud, 0.55, 0.468, '0', 'Units', 'normalized', ...
+     'Color', [0.2 0.9 0.3], 'FontSize', 12, 'FontWeight', 'bold', 'FontName', 'Consolas');
+plot(ax_hud, [0.05 0.95], [0.445 0.445], 'Color', [0.22 0.25 0.32], 'LineWidth', 0.8);
+
+% HUD: Goal progress
+text(ax_hud, 0.08, 0.420, 'GOAL PROGRESS', 'Units', 'normalized', ...
+     'Color', [0.45 0.5 0.6], 'FontSize', 7, 'FontName', 'Consolas');
+patch(ax_hud, [0.08 0.92 0.92 0.08], [0.390 0.390 0.408 0.408], [0.15 0.18 0.24], 'EdgeColor', 'none');
+h_hud_progbar = patch(ax_hud, [0.08 0.08 0.08 0.08], [0.390 0.390 0.408 0.408], [0.25 0.65 1.0], 'EdgeColor', 'none');
+h_hud_progpct = text(ax_hud, 0.5, 0.371, '0%', 'Units', 'normalized', ...
+     'HorizontalAlignment', 'center', 'Color', [0.55 0.6 0.7], 'FontSize', 7, 'FontName', 'Consolas');
+plot(ax_hud, [0.05 0.95], [0.355 0.355], 'Color', [0.22 0.25 0.32], 'LineWidth', 0.8);
+
+% HUD: Legend
+text(ax_hud, 0.08, 0.330, 'MAP LEGEND', 'Units', 'normalized', ...
+     'Color', [0.45 0.5 0.6], 'FontSize', 7, 'FontName', 'Consolas');
+leg_items = { [0.0 0.82 1.0],  'ADAS VEHICLE'; [1.0 0.52 0.06], 'TRUCK / BUS'; ...
+              [1.0 0.68 0.15], 'CAR / SUV'; [1.0 0.60 0.10], 'AUTO RICKSHAW'; ...
+              [1.0 0.72 0.22], 'MOTORCYCLE'; [1.0 0.28 0.28], 'PEDESTRIAN'; ...
+              [0.95 0.78 0.12],'COW / CATTLE'; [0.50 0.58 0.72], 'PUSHCART' };
+for li = 1:size(leg_items,1)
+    yp = 0.300 - (li-1)*0.030;
+    patch(ax_hud, [0.08 0.16 0.16 0.08], [yp yp yp+0.018 yp+0.018], ...
+          leg_items{li,1}, 'EdgeColor', 'none');
+    text(ax_hud, 0.20, yp+0.009, leg_items{li,2}, 'Units', 'normalized', ...
+         'VerticalAlignment', 'middle', 'Color', [0.60 0.64 0.72], ...
+         'FontSize', 7, 'FontName', 'Consolas');
+end
+
+% ---- Draw scenario background (roads, lanes, etc.) ----
 if isfield(scen_cfg, 'draw_background')
     scen_cfg.draw_background(ax);
 end
 
-% Goal plot
-plot(ax, goal(1), goal(2), 'p', 'MarkerSize', 18, 'MarkerFaceColor', [1 0.85 0], 'MarkerEdgeColor', 'w');
-text(ax, goal(1)+1.5, goal(2)+0.8, 'GOAL', 'Color', [1 0.85 0], 'FontSize', 9, 'FontWeight', 'bold');
+% ---- Goal flag ----
+patch(ax, goal(1) + [0 0 0.3 0.3], goal(2) + [0 3 3 0], [1 0.82 0], 'EdgeColor', 'none', 'FaceAlpha', 0.85);
+plot(ax, [goal(1) goal(1)], [goal(2) goal(2)+4.5], 'Color', [1 0.82 0], 'LineWidth', 2.5);
+text(ax, goal(1)+1.2, goal(2)+4.8, 'GOAL', 'Color', [1 0.82 0], ...
+     'FontSize', 9, 'FontWeight', 'bold', 'FontName', 'Consolas');
 
-% Graphic handles
-path_col = 'c--';
-if is_baseline, path_col = 'm--'; end
-h_path  = plot(ax, NaN, NaN, path_col, 'LineWidth', 2.0);
-h_pred  = plot(ax, NaN, NaN, 'r:', 'LineWidth', 1.5);
-h_lidar = plot(ax, NaN, NaN, '.', 'Color', [0.2 0.85 1.0], 'MarkerSize', 5);
-h_traj  = plot(ax, ego.x, ego.y, 'g-', 'LineWidth', 1.5);
-h_ego   = plot(ax, ego.x, ego.y, 'o', 'MarkerSize', 10, 'MarkerFaceColor', [0 0.85 0.3], 'MarkerEdgeColor', 'w', 'LineWidth', 1.5);
+% ---- Planned path and prediction lines ----
+path_col = [0.15 0.85 0.95];
+if is_baseline, path_col = [0.9 0.3 0.9]; end
+h_path  = plot(ax, NaN, NaN, '--', 'Color', path_col, 'LineWidth', 2.2);
+h_pred  = plot(ax, NaN, NaN, ':', 'Color', [1.0 0.35 0.35], 'LineWidth', 1.4);
+h_lidar = plot(ax, NaN, NaN, '.', 'Color', [0.25 0.85 1.0], 'MarkerSize', 4);
+% Trajectory trail
+h_traj  = plot(ax, ego.x, ego.y, '-', 'Color', [0.15 0.75 0.35], 'LineWidth', 2.5);
 
-% Actor handles map
-actor_handles = containers.Map();
+% ---- Ego vehicle patch (rotated rectangle) ----
+[ex, ey] = adas_vehicle_patch(ego.x, ego.y, ego.heading, veh.length_m, veh.width_m, 'car');
+h_ego_body = patch(ax, ex, ey, [0.0 0.82 1.0], ...
+                   'EdgeColor', [1.0 1.0 1.0], 'LineWidth', 1.5, 'FaceAlpha', 1.0);
+% Ego windshield overlay
+[ewx, ewy] = adas_window_patch(ego.x, ego.y, ego.heading, veh.length_m, veh.width_m, 'car');
+h_ego_win = patch(ax, ewx, ewy, [0.0 0.3 0.5], 'EdgeColor', 'none', 'FaceAlpha', 1.0);
+% Ego direction arrow
+h_ego_arrow = quiver(ax, ego.x, ego.y, cos(ego.heading)*2.5, sin(ego.heading)*2.5, ...
+                     0, 'Color', 'w', 'LineWidth', 2.0, 'MaxHeadSize', 0.8);
+% Ego label
+h_ego_lbl = text(ax, ego.x, ego.y+2.5, 'ADAS', 'Color', [0.8 0.97 1.0], ...
+                 'FontSize', 7, 'FontWeight', 'bold', 'FontName', 'Consolas', ...
+                 'HorizontalAlignment', 'center');
+
+% ---- Actor patches ----
+actor_patches = containers.Map();
+actor_arrows  = containers.Map();
+actor_labels  = containers.Map();
+actor_windows = containers.Map();
 for k = 1:numel(scen_cfg.actors)
     act = scen_cfg.actors{k};
-    col = [0.85 0.45 0.1];
-    marker = 's';
-    msize = 10;
-    if strcmpi(act.class, 'person'), col = [1.0 0.4 0.4]; marker = 'o'; msize = 7;
-    elseif strcmpi(act.class, 'cow'), col = [0.6 0.4 0.2]; marker = 's'; msize = 12;
-    elseif strcmpi(act.class, 'auto_rickshaw') || strcmpi(act.class, 'rickshaw'), col = [0.9 0.8 0.1]; marker = 'd'; msize = 10;
-    elseif strcmpi(act.class, 'pushcart') || strcmpi(act.class, 'thela'), col = [0.7 0.5 0.3]; marker = 's'; msize = 11;
-    elseif strcmpi(act.class, 'motorcycle') || strcmpi(act.class, 'bicycle'), col = [0.2 0.7 1.0]; marker = '^'; msize = 8;
-    elseif strcmpi(act.class, 'truck'), col = [0.9 0.5 0.1]; marker = 's'; msize = 14;
+    [ac, aw, al_str, aheading] = adas_actor_style(act);
+    [px, py] = adas_vehicle_patch(act.x, act.y, aheading, al_str, aw, act.class);
+    h_p = patch(ax, px, py, ac, 'EdgeColor', ac*0.3, 'LineWidth', 1.5, 'FaceAlpha', 1.0);
+    % Windshield for vehicles (not pedestrians/cows/carts)
+    cls_lc = lower(act.class);
+    has_win = any(strcmp(cls_lc, {'car','suv','sedan','truck','bus','auto_rickshaw','rickshaw','motorcycle','bicycle','bike'}));
+    if has_win
+        [wpx, wpy] = adas_window_patch(act.x, act.y, aheading, al_str, aw, act.class);
+        h_w = patch(ax, wpx, wpy, [0.15 0.15 0.15], 'EdgeColor', 'none', 'FaceAlpha', 1.0);
+        actor_windows(act.id) = h_w;
     end
-    h_act = plot(ax, act.x, act.y, marker, 'MarkerSize', msize, 'MarkerFaceColor', col, 'MarkerEdgeColor', 'w', 'LineWidth', 1.5);
-    actor_handles(act.id) = h_act;
+    % Direction arrow for moving actors
+    spd = norm([act.vx, act.vy]);
+    h_a = quiver(ax, act.x, act.y, act.vx/max(spd,0.1)*1.8, act.vy/max(spd,0.1)*1.8, ...
+                 0, 'Color', [1 1 1], 'LineWidth', 1.2, 'MaxHeadSize', 1.0);
+    % Class label above actor
+    h_l = text(ax, act.x, act.y + aw/2 + 0.8, upper(act.class), ...
+               'Color', min(ac*1.3+0.1,1), 'FontSize', 6, 'FontName', 'Consolas', ...
+               'HorizontalAlignment', 'center');
+    actor_patches(act.id) = h_p;
+    actor_arrows(act.id)  = h_a;
+    actor_labels(act.id)  = h_l;
 end
 
-h_status = text(ax, 0.02, 0.94, '', 'Units', 'normalized', 'Color', 'w', ...
-                'FontSize', 10, 'VerticalAlignment', 'top', 'FontWeight', 'bold');
+% ---- Status overlay on main map (bottom-left corner) ----
+h_status = text(ax, 0.01, 0.03, '', 'Units', 'normalized', ...
+                'Color', [0.75 0.78 0.85], 'FontSize', 7.5, ...
+                'FontName', 'Consolas', 'VerticalAlignment', 'bottom', ...
+                'BackgroundColor', [0.08 0.09 0.13], ...
+                'Margin', 4);
+
 
 % ---------------------------------------------------------------------------
 % 3. Master Simulation Loop
@@ -148,12 +276,23 @@ while t < max_time && ishandle(fig)
         ego.speed = 0.0;
         traj_x(end+1) = ego.x; %#ok<AGROW>
         traj_y(end+1) = ego.y; %#ok<AGROW>
-        set(h_ego,  'XData', ego.x, 'YData', ego.y);
+        set(h_ego_body,  'XData', ex, 'YData', ey);
+        [ewx, ewy] = adas_window_patch(ego.x, ego.y, 0, veh.length_m, veh.width_m, 'car');
+        set(h_ego_win,   'XData', ewx, 'YData', ewy);
+        set(h_ego_arrow, 'XData', ego.x, 'YData', ego.y, 'UData', 0, 'VData', 0);
+        set(h_ego_lbl,   'Position', [ego.x, ego.y + veh.width_m/2 + 1.0, 0]);
         set(h_traj, 'XData', traj_x, 'YData', traj_y);
         set(h_path, 'XData', NaN, 'YData', NaN);
-        set(h_status, 'String', sprintf('t=%.1fs | [%s] GOAL REACHED | Speed: 0.0 km/h | Min Clearance: %.1fm | Replans: %d', ...
-            t, upper(mode), min_dist_this_frame, log_data.replans), 'Color', [0.2 0.9 0.2]);
-        title(ax, sprintf('Scenario: %s [%s Mode]  |  Status: GOAL REACHED', scen_cfg.title, upper(mode)), 'Color', [0.2 0.9 0.2], 'FontSize', 12);
+        % HUD final update
+        set(h_hud_speed,   'String', sprintf('SPEED  0.0 km/h'), 'Color', [0.2 0.95 0.5]);
+        set(h_hud_dec,     'String', 'GOAL REACHED', 'Color', [0.15 0.95 0.35]);
+        set(h_hud_time,    'String', sprintf('TIME   %.1f s', t));
+        set(h_hud_progbar, 'XData', [0.08 0.92 0.92 0.08]);
+        set(h_hud_progpct, 'String', '100%');
+        set(h_status, 'String', sprintf('GOAL REACHED  |  t=%.1fs  |  Min Clearance: %.1fm  |  Replans: %d', ...
+            t, min_dist_this_frame, log_data.replans), 'Color', [0.2 0.95 0.35]);
+        title(ax, sprintf('%s  [%s]  —  ✓ GOAL REACHED', scen_cfg.title, upper(mode)), ...
+              'Color', [0.2 0.95 0.35], 'FontSize', 11, 'FontName', 'Consolas');
         drawnow;
         arrived = true;
         break;
@@ -171,8 +310,22 @@ while t < max_time && ishandle(fig)
         actors{k} = scen_cfg.update_actor(actors{k}, t, dt, ego);
         act = actors{k};
         
-        if isKey(actor_handles, act.id)
-            set(actor_handles(act.id), 'XData', act.x, 'YData', act.y);
+        if isKey(actor_patches, act.id)
+            aheading_act = atan2(act.vy, act.vx);
+            if abs(act.vx) < 0.05 && abs(act.vy) < 0.05, aheading_act = 0; end
+            [~, aw_act, al_act, ~] = adas_actor_style(act);
+            [apx, apy] = adas_vehicle_patch(act.x, act.y, aheading_act, al_act, aw_act, act.class);
+            set(actor_patches(act.id), 'XData', apx, 'YData', apy);
+            if isKey(actor_windows, act.id)
+                [wpx, wpy] = adas_window_patch(act.x, act.y, aheading_act, al_act, aw_act, act.class);
+                set(actor_windows(act.id), 'XData', wpx, 'YData', wpy);
+            end
+            spd_act = norm([act.vx, act.vy]);
+            if spd_act > 0.1
+                set(actor_arrows(act.id), 'XData', act.x, 'YData', act.y, ...
+                    'UData', act.vx/spd_act*1.8, 'VData', act.vy/spd_act*1.8);
+            end
+            set(actor_labels(act.id), 'Position', [act.x, act.y + aw_act/2 + 0.8, 0]);
         end
 
         dx = act.x - ego.x;
@@ -198,8 +351,21 @@ while t < max_time && ishandle(fig)
         end
     end
 
-    % Check physical collision: only count if vehicle is moving and contacts an obstacle
-    if min_dist_this_frame < 0.6 && ego.speed > 0.4
+    % Check physical collision using Bounding Box overlap
+    % Ego size: 4.6m (length), 1.8m (width). Half-dims: 2.3m, 0.9m
+    has_collision = false;
+    for k = 1:numel(tracks_struct)
+        tr = tracks_struct(k);
+        dx = abs(tr.x - ego.x);
+        dy = abs(tr.y - ego.y);
+        % Add 0.1m tolerance margin
+        if dx < (2.3 + tr.length/2 - 0.1) && dy < (0.9 + tr.width/2 - 0.1)
+            has_collision = true;
+            break;
+        end
+    end
+
+    if has_collision && ego.speed > 0.4
         log_data.collisions = log_data.collisions + 1;
     end
 
@@ -291,6 +457,9 @@ while t < max_time && ishandle(fig)
             ego_pose = [ego.x, ego.y, ego.heading];
             goal_pose = [min(goal(1), ego.x + 40), goal(2), 0];
             veh.is_dense = is_dense;
+            if isfield(scen_cfg, 'lane_half_width')
+                veh.lane_half_width = scen_cfg.lane_half_width;
+            end
             [px, py, pyaw, plan_time_ms] = plan_path(map, ego_pose, goal_pose, veh);
 
             if ~isempty(px)
@@ -328,15 +497,21 @@ while t < max_time && ishandle(fig)
             if dx > -1.0 && dx < 45.0
                 obs_hw = tr.width / 2;
                 corridor_thresh = (veh.width_m / 2) + obs_hw + 0.30;
-                is_opposite_lane = (tr.y > 0.8 && ego.y < 0.3 && tr.vx < -0.3);
+                % Opposite-lane check: actor is on the other side of the road from ego,
+                % moving toward us (oncoming). Use ego.y as reference.
+                lane_sep = 1.5; % minimum lateral separation to count as opposite lane
+                is_opposite_lane = (tr.vx < -0.3) && ((tr.y - ego.y) > lane_sep);
 
-                % In dense mode: if obstacle is static AND planner found a path
-                % with sufficient bypass clearance, don't flag as in_path_hazard
-                % (the planner has already routed around it)
+                % In adaptive mode: trust the planner for STATIC INFRASTRUCTURE only
+                % (pushcarts, parked vehicles that cannot move).
+                % Do NOT apply bypass for vehicles that can move (motorcycle, bicycle, car)
+                % since a stopped vehicle can still cause a collision if ego swerves near it.
                 is_static_obs = (abs(tr.vx) < 0.1 && abs(tr.vy) < 0.1);
+                cls_lower = lower(tr.class);
+                is_infrastructure = any(strcmp(cls_lower, {'pushcart','thela','sign','barrier','parked'}));
                 bypass_threshold = corridor_thresh;
-                if is_dense && is_static_obs
-                    bypass_threshold = 0.7; % Only trigger if path literally hits it
+                if is_static_obs && is_infrastructure
+                    bypass_threshold = 0.7; % Only block if planned path literally hits fixed infrastructure
                 end
 
                 % Check distance from ALL predicted points to the planned path
@@ -481,10 +656,10 @@ while t < max_time && ishandle(fig)
 
     % Progressive Ramp-Up Longitudinal Control
     if committed_level == 4 % EMERGENCY_STOP
-        accel = -6.5;
+        accel = -8.0;  % Increased max braking force
         throttle = 0.0; brake = 1.0;
     elseif committed_level == 3 % BRAKE
-        accel = -3.5;
+        accel = -4.5;
         throttle = 0.0; brake = 0.7;
     else
         % Smooth ramp-up from stop (start gently, then accelerate to cruising speed)
@@ -552,15 +727,47 @@ while t < max_time && ishandle(fig)
     % -----------------------------------------------------------------------
     % J. Graphics Update
     % -----------------------------------------------------------------------
-    set(h_ego,  'XData', ego.x, 'YData', ego.y);
+    % Update ego patch
+    [ex, ey] = adas_vehicle_patch(ego.x, ego.y, ego.heading, veh.length_m, veh.width_m, 'car');
+    set(h_ego_body,  'XData', ex, 'YData', ey);
+    [ewx, ewy] = adas_window_patch(ego.x, ego.y, ego.heading, veh.length_m, veh.width_m, 'car');
+    set(h_ego_win,   'XData', ewx, 'YData', ewy);
+    set(h_ego_arrow, 'XData', ego.x, 'YData', ego.y, ...
+                     'UData', cos(ego.heading)*2.5, 'VData', sin(ego.heading)*2.5);
+    set(h_ego_lbl,   'Position', [ego.x, ego.y + veh.width_m/2 + 1.0, 0]);
     set(h_traj, 'XData', traj_x, 'YData', traj_y);
 
-    xlim(ax, [ego.x - 15, ego.x + 65]);
+    xlim(ax, [ego.x - 18, ego.x + 62]);
 
+    % HUD updates
+    goal_dist_x = max(0, goal(1) - scen_cfg.ego_init.x);
+    ego_prog    = min(1, max(0, (ego.x - scen_cfg.ego_init.x) / max(goal_dist_x, 1)));
+    prog_xr     = 0.08 + ego_prog * 0.84;
     col = scenario_color(decision_str);
-    set(h_status, 'String', sprintf('t=%.1fs | [%s] %s [%s] | Speed: %.1f km/h | Min Clearance: %.1fm | Replans: %d', ...
-        t, upper(mode), decision_str, rule_id, ego.speed*3.6, min_dist_this_frame, log_data.replans), 'Color', col);
-    title(ax, sprintf('Scenario: %s [%s Mode]  |  Status: %s', scen_cfg.title, upper(mode), decision_str), 'Color', col, 'FontSize', 12);
+    clr_norm = min(1, max(0, min_dist_this_frame / 10.0));
+    clr_col  = [1-clr_norm, clr_norm*0.85, clr_norm*0.3];
+
+    set(h_hud_time,    'String', sprintf('TIME   %.1f s', t));
+    set(h_hud_speed,   'String', sprintf('SPEED  %.1f km/h', ego.speed*3.6), 'Color', col);
+    set(h_hud_mode,    'String', sprintf('MODE   %s', upper(mode)));
+    set(h_hud_dec,     'String', decision_str, 'Color', col);
+    set(h_hud_rule,    'String', sprintf('Rule: %s  |  Hazard: %s', rule_id, critical_label));
+    if isfinite(min_dist_this_frame)
+        set(h_hud_clr, 'String', sprintf('%.2f m', min_dist_this_frame), 'Color', clr_col);
+    else
+        set(h_hud_clr, 'String', 'Clear', 'Color', [0.2 0.95 0.5]);
+    end
+    set(h_hud_clrbar,  'XData', [0.08, min(0.08+clr_norm*0.84, 0.92), min(0.08+clr_norm*0.84, 0.92), 0.08], 'FaceColor', clr_col);
+    set(h_hud_rep,     'String', sprintf('%d', log_data.replans));
+    set(h_hud_col_cnt, 'String', sprintf('%d', log_data.collisions), ...
+                       'Color', [1-(log_data.collisions>0)*0.8, 0.2+(log_data.collisions==0)*0.7, 0.3*(log_data.collisions==0)]);
+    set(h_hud_progbar, 'XData', [0.08, prog_xr, prog_xr, 0.08]);
+    set(h_hud_progpct, 'String', sprintf('%d%%', round(ego_prog*100)));
+
+    set(h_status, 'String', sprintf('t=%.1fs  |  %s [%s]  |  Speed: %.1f km/h  |  Clr: %.1fm  |  Replans: %d', ...
+        t, decision_str, rule_id, ego.speed*3.6, min_dist_this_frame, log_data.replans));
+    title(ax, sprintf('%s  [%s Mode]', scen_cfg.title, upper(mode)), ...
+          'Color', [0.50 0.55 0.65], 'FontSize', 10, 'FontName', 'Consolas');
 
     drawnow limitrate;
     t = t + dt;
@@ -592,6 +799,20 @@ scenario_result.traj_y = traj_y;
 
 assignin('base', 'scenario_result', scenario_result);
 
+% ---------------------------------------------------------------------------
+% Hard-clamp goal snap — update patches on final frame
+% ---------------------------------------------------------------------------
+[ex, ey] = adas_vehicle_patch(ego.x, ego.y, ego.heading, veh.length_m, veh.width_m, 'car');
+if ishandle(fig)
+    set(h_ego_body, 'XData', ex, 'YData', ey);
+    set(h_hud_dec,  'String', 'GOAL REACHED', 'Color', [0.15 0.95 0.35]);
+    set(h_hud_progbar, 'XData', [0.08 0.92 0.92 0.08]);
+    set(h_hud_progpct, 'String', '100%');
+    title(ax, sprintf('%s  [%s]  —  GOAL REACHED', scen_cfg.title, upper(mode)), ...
+          'Color', [0.2 0.95 0.35], 'FontSize', 10, 'FontName', 'Consolas');
+    drawnow;
+end
+
 function c = scenario_color(d)
     switch d
         case 'PROCEED',        c = [0.2 0.9 0.2];
@@ -601,5 +822,132 @@ function c = scenario_color(d)
         case 'EMERGENCY_STOP', c = [1.0 0.0 0.0];
         otherwise,             c = [0.8 0.8 0.8];
     end
+end
+
+function [px, py] = adas_vehicle_patch(cx, cy, heading, len, wid, cls)
+% Returns top-view silhouette polygon for each vehicle class.
+% Each class gets a distinctive shape instead of a plain rectangle.
+    if nargin < 6, cls = 'car'; end
+    cls = lower(cls);
+    hl = len/2;  hw = wid/2;
+
+    if any(strcmp(cls, {'car','suv','sedan'}))
+        % Car: tapered nose (pointed front), wide body, squared rear
+        % 10-point shape giving a proper top-view car silhouette
+        raw_x = [-hl,   -hl*0.15,  hl*0.50,  hl,    hl,    hl*0.50, -hl*0.15, -hl,   -hl, -hl];
+        raw_y = [-hw,   -hw,       -hw*0.78, -hw*0.45, hw*0.45, hw*0.78,  hw,      hw,   hw, -hw];
+
+    elseif any(strcmp(cls, {'truck','bus'}))
+        % Truck: long flat trailer + distinct cab at front (bumped forward section)
+        % 12-point shape: flat trailer body with cab protrusion
+        cab = hl * 0.35;  % cab length proportion
+        raw_x = [-hl, -hl, hl-cab, hl-cab, hl,    hl,    hl-cab, hl-cab, -hl, -hl, -hl, -hl];
+        raw_y = [-hw, hw,  hw,     hw*0.9,  hw*0.9,-hw*0.9,-hw*0.9,-hw,   -hw,  hw,  hw, -hw];
+        raw_x = [-hl, hl-cab, hl-cab, hl,   hl,   hl-cab, hl-cab, -hl];
+        raw_y = [-hw, -hw,    -hw*0.85, -hw*0.85, hw*0.85, hw*0.85, hw, hw];
+
+    elseif any(strcmp(cls, {'auto_rickshaw','rickshaw'}))
+        % Rickshaw: wide rear, tapered front (reverse of car)
+        raw_x = [-hl,  -hl*0.3,  hl,  hl,  -hl*0.3, -hl];
+        raw_y = [-hw,  -hw,     -hw*0.55,  hw*0.55,   hw,  hw];
+
+    elseif any(strcmp(cls, {'motorcycle','bicycle','bike'}))
+        % Motorcycle: narrow teardrop (wide rear, pointed front)
+        theta = linspace(-pi/2, pi/2, 8);
+        front_x =  hl * cos(theta);
+        front_y =  hw * 0.5 * sin(theta);
+        rear_x  = -hl * cos(theta(end:-1:1));
+        rear_y  =  hw * sin(theta(end:-1:1));
+        raw_x = [front_x, rear_x];
+        raw_y = [front_y, rear_y];
+
+    elseif any(strcmp(cls, {'person','pedestrian'}))
+        % Pedestrian: circle (12 points)
+        theta = linspace(0, 2*pi-0.01, 12);
+        r = max(hw, 0.40);
+        raw_x = r * cos(theta);
+        raw_y = r * sin(theta);
+
+    elseif any(strcmp(cls, {'cow','cattle','animal'}))
+        % Cow: oval body (elongated ellipse)
+        theta = linspace(0, 2*pi-0.01, 14);
+        raw_x = hl * cos(theta);
+        raw_y = hw * sin(theta);
+
+    elseif any(strcmp(cls, {'pushcart','thela'}))
+        % Pushcart: rectangle with a small handle notch at rear
+        raw_x = [-hl, hl, hl, -hl*0.85, -hl*0.85, -hl];
+        raw_y = [-hw, -hw, hw, hw, hw*0.6, hw*0.6];
+
+    else
+        % Default: simple rectangle
+        raw_x = [-hl, hl, hl, -hl];
+        raw_y = [-hw, -hw, hw,  hw];
+    end
+
+    R = [cos(heading), -sin(heading); sin(heading), cos(heading)];
+    rc = R * [raw_x; raw_y];
+    px = cx + rc(1,:);
+    py = cy + rc(2,:);
+end
+
+function [px, py] = adas_window_patch(cx, cy, heading, len, wid, cls)
+% Returns a smaller highlight patch representing windshield / front glass.
+    if nargin < 6, cls = 'car'; end
+    cls = lower(cls);
+    hl = len/2;  hw = wid/2;
+
+    if any(strcmp(cls, {'car','suv','sedan'}))
+        % Front windshield zone (front 30% of car, inner 60% of width)
+        raw_x = [hl*0.15, hl*0.72, hl*0.72, hl*0.15];
+        raw_y = [-hw*0.52, -hw*0.38, hw*0.38, hw*0.52];
+    elseif any(strcmp(cls, {'truck','bus'}))
+        % Cab windshield
+        raw_x = [hl*0.45, hl*0.92, hl*0.92, hl*0.45];
+        raw_y = [-hw*0.55, -hw*0.40, hw*0.40, hw*0.55];
+    elseif any(strcmp(cls, {'auto_rickshaw','rickshaw'}))
+        raw_x = [hl*0.20, hl*0.80, hl*0.80, hl*0.20];
+        raw_y = [-hw*0.40, -hw*0.25, hw*0.25, hw*0.40];
+    elseif any(strcmp(cls, {'motorcycle','bicycle','bike'}))
+        % Headlight dot at front
+        theta = linspace(0, 2*pi-0.01, 8);
+        raw_x = hl*0.65 + hw*0.25*cos(theta);
+        raw_y = hw*0.25*sin(theta);
+    else
+        raw_x = NaN;  raw_y = NaN;
+    end
+
+    R = [cos(heading), -sin(heading); sin(heading), cos(heading)];
+    rc = R * [raw_x; raw_y];
+    px = cx + rc(1,:);
+    py = cy + rc(2,:);
+end
+
+function [col, width, len, heading] = adas_actor_style(act)
+% Returns color, width, length, and heading for each actor class.
+% Unified professional palette: amber family for vehicles, red for VRUs,
+% golden for animals, steel-gray for static obstacles.
+    heading = atan2(act.vy, act.vx);
+    if abs(act.vx) < 0.05 && abs(act.vy) < 0.05, heading = 0; end
+    cls = lower(act.class);
+    if any(strcmp(cls, {'truck','bus'}))
+        col = [1.0 0.52 0.06];  width = 2.6;  len = 8.5;  % Deep amber — large, stands out
+    elseif any(strcmp(cls, {'car','suv','sedan'}))
+        col = [1.0 0.68 0.15];  width = 1.85; len = 4.4;  % Mid amber
+    elseif any(strcmp(cls, {'auto_rickshaw','rickshaw'}))
+        col = [1.0 0.60 0.10];  width = 1.45; len = 2.9;  % Amber-orange
+    elseif any(strcmp(cls, {'motorcycle','bicycle','bike'}))
+        col = [1.0 0.72 0.22];  width = 0.80; len = 2.0;  % Light amber
+    elseif any(strcmp(cls, {'person','pedestrian'}))
+        col = [1.0 0.28 0.28];  width = 0.60; len = 0.60; % Coral red — VRU danger
+    elseif any(strcmp(cls, {'cow','cattle','animal'}))
+        col = [0.95 0.78 0.12]; width = 1.5;  len = 2.2;  % Golden yellow
+    elseif any(strcmp(cls, {'pushcart','thela'}))
+        col = [0.50 0.58 0.72]; width = 1.2;  len = 2.0;  % Steel blue-gray — static
+    else
+        col = [0.65 0.68 0.75]; width = 1.8;  len = 4.0;  % Default gray
+    end
+    if isfield(act, 'width'),  width = act.width;  end
+    if isfield(act, 'length'), len   = act.length; end
 end
 end

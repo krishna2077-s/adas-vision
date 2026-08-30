@@ -299,8 +299,8 @@ CLASS_REAL_HEIGHTS = {
 # Path corridor — how wide the "in front of us" zone is (pixels, half-width).
 # Narrows near the horizon, widens near the vehicle to mimic perspective.
 # ---------------------------------------------------------------------------
-PATH_CORRIDOR_MIN_PX = 60     # half-width near the horizon
-PATH_CORRIDOR_MAX_PX = 300    # half-width near the vehicle
+PATH_CORRIDOR_MIN_PX = 120    # half-width near the horizon
+PATH_CORRIDOR_MAX_PX = 450    # half-width near the vehicle
 
 # ---------------------------------------------------------------------------
 # Risk thresholds by estimated distance (metres)
@@ -330,9 +330,9 @@ ENABLE_OBJECT_DETECTION = True
 # ---------------------------------------------------------------------------
 
 # --- Longitudinal distance / time-to-collision (TTC) thresholds -------------
-DIST_EMERGENCY_M    = 5.0    # in-path object closer than this  -> EMERGENCY
-TTC_EMERGENCY_S     = 1.2    # in-path TTC (while closing) below this -> EMERGENCY
-TTC_BRAKE_S         = 2.5    # in-path TTC below this -> BRAKE
+DIST_EMERGENCY_M    = 8.0    # in-path object closer than this  -> EMERGENCY
+TTC_EMERGENCY_S     = 1.8    # in-path TTC (while closing) below this -> EMERGENCY
+TTC_BRAKE_S         = 3.0    # in-path TTC below this -> BRAKE
 TTC_CAUTION_S       = 4.0    # in-path TTC below this -> CAUTION (gentle closing)
 MIN_CLOSING_MPS     = 0.3    # below this closing speed, TTC is undefined (receding)
 STOPSIGN_DISTANCE_M = 25.0   # in-path stop sign / light within this range -> SLOW
@@ -395,7 +395,7 @@ DETECTION_STALE_HOLD_FRAMES = 8
 # Vulnerable road users earn extra reaction margin; advisory signs are never
 # braked on hard (Module 2 does not report a light's colour, so we only ease).
 VULNERABLE_CLASSES      = {"person", "bicycle", "motorcycle", "cow", "dog", "cat"}
-VULNERABLE_TTC_MARGIN_S = 0.8
+VULNERABLE_TTC_MARGIN_S = 1.2
 # Never output PROCEED while a confirmed vulnerable road user is in the ego path
 # within this range — the escalation ratchet needs a frame or two to confirm a
 # newly-entered hazard, and for a close VRU even one frame of PROCEED is

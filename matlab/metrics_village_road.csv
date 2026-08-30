@@ -1,18 +1,18 @@
 metric,value,unit
 scenario,village_road,
-timestamp,2026-08-30 14:47:14,
-duration_s,32.80,s
-distance_m,176.05,m
-mean_speed_kmh,19.31,km/h
-max_speed_kmh,24.98,km/h
-path_smoothness,0.00286,rad/m
-lateral_rms_m,0.526,m
-min_clearance_m,1.92,m
+timestamp,2026-08-30 21:13:03,
+duration_s,33.76,s
+distance_m,175.81,m
+mean_speed_kmh,18.76,km/h
+max_speed_kmh,49.54,km/h
+path_smoothness,0.00115,rad/m
+lateral_rms_m,0.200,m
+min_clearance_m,1.82,m
 collisions,0,count
-n_replans,7,count
-mean_replan_ms,1.81,ms
-p95_replan_ms,7.50,ms
-max_decel_mps2,3.000,m/s2
-idle_fraction,0.000,frac
-proceed_fraction,0.724,frac
+n_replans,29,count
+mean_replan_ms,7.57,ms
+p95_replan_ms,21.07,ms
+max_decel_mps2,4.500,m/s2
+idle_fraction,0.150,frac
+proceed_fraction,0.534,frac
 scenario_completed,1,bool

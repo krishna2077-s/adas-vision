@@ -40,8 +40,13 @@ function [path_x, path_y, path_yaw, plan_time_ms] = plan_path(occupancy_map, ego
             pts_y = origin(2) + (num_rows - occ_r + 0.5) / res;
 
             % Filter to forward region of interest
+            % Use lane_half_width from veh_params if available (e.g. highway = 7.5m)
+            lateral_filter = 5.0;
+            if isfield(veh_params, 'lane_half_width')
+                lateral_filter = veh_params.lane_half_width + 1.0;
+            end
             fwd = (pts_x >= x0 - 1.0 & pts_x <= x0 + lookahead + 5.0) & ...
-                  (abs(pts_y) <= 4.0); % Within drivable road edges
+                  (abs(pts_y) <= lateral_filter);
             if any(fwd)
                 obs_pts = [pts_x(fwd), pts_y(fwd)];
             end
@@ -51,13 +56,19 @@ function [path_x, path_y, path_yaw, plan_time_ms] = plan_path(occupancy_map, ego
     end
 
     is_dense_cfg = isfield(veh_params, 'is_dense') && veh_params.is_dense;
-
+    
+    % Candidate lateral offset range based on road width
+    road_half = 2.0; % default if not provided
+    if isfield(veh_params, 'lane_half_width')
+        road_half = min(veh_params.lane_half_width - 0.5, 5.0); % leave 0.5m shoulder margin
+    end
+    
     % Candidate lateral offsets across the drivable road
     % Dense mode: wider range so ego can swerve hard left to bypass a kerb obstacle
     if is_dense_cfg
-        candidate_y = linspace(-3.0, 3.0, 61);  % Full 6m street width sampling
+        candidate_y = linspace(-road_half, road_half, 61);
     else
-        candidate_y = linspace(-1.8, 1.8, 37);
+        candidate_y = linspace(-road_half, road_half, 37);
     end
     
     best_y = y_target;
@@ -87,28 +98,26 @@ function [path_x, path_y, path_yaw, plan_time_ms] = plan_path(occupancy_map, ego
         end
 
         is_dense = isfield(veh_params, 'is_dense') && veh_params.is_dense;
-        min_clearance_limit = 1.35;
-        soft_clearance_limit = 1.1;
+        min_clearance_limit = 2.2;
+        soft_clearance_limit = 1.8;
         if is_dense
-            min_clearance_limit = 0.9;
-            soft_clearance_limit = 0.7;
+            min_clearance_limit = 1.5;
+            soft_clearance_limit = 1.2;
         end
 
         % Repulsion cost function based on minimum clearance:
-        % Minimum physical radius: vehicle half-width ~0.95m + obstacle margin ~0.4m = 1.35m
+        % Minimum physical radius: vehicle half-width ~0.95m + obstacle margin ~1.25m = 2.2m
         if min_clearance < min_clearance_limit
             repulsion_cost = 50000.0; % Hard collision penalty
-        elseif min_clearance < 2.5
+        elseif min_clearance < 3.5
             % Strong smooth inverse-distance repulsion
             repulsion_cost = 350.0 / ((min_clearance - soft_clearance_limit)^2);
         else
             repulsion_cost = 0.0;
         end
 
-        % Road boundary penalty
-        % In dense mode allow up to 3.0m lateral (full market lane width)
-        road_limit = 2.0;
-        if is_dense_cfg, road_limit = 3.0; end
+        % Road boundary penalty — uses the same road_half computed above
+        road_limit = road_half;
         road_edge_cost = 0.0;
         if abs(cy) > road_limit
             road_edge_cost = 1000.0 * (abs(cy) - road_limit)^2;

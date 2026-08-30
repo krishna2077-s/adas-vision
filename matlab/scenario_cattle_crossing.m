@@ -23,7 +23,7 @@ cfg.lane_half_width = 3.5;
 cfg.ego_init.x       = 0.0;
 cfg.ego_init.y       = -0.4;
 cfg.ego_init.heading = 0.0;
-cfg.ego_init.speed   = 4.17; % 15 km/h
+cfg.ego_init.speed   = 9.72; % 35 km/h — realistic rural road speed
 
 cfg.goal = [160.0, 0.0, 0.0];
 cfg.goal_tol = 4.0;  % Wider catch — prevents x-drift overshoot
@@ -60,8 +60,8 @@ end
 % Helper Functions
 % ---------------------------------------------------------------------------
 function act = update_cattle_actors(act, t, dt)
-    % Cows start moving onto road at t=2.5s
-    if t >= 2.5 && act.y < 3.8
+    % Cows start moving onto road at t=2.5s; walk fully off the opposite shoulder
+    if t >= 2.5 && act.y < 8.0
         act.x = act.x + act.vx * dt;
         act.y = act.y + act.vy * dt;
     end
