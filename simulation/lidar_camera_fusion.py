@@ -127,8 +127,8 @@ def draw_bev_radar(tracks, bev_w=320, bev_h=240, max_range_m=25.0):
 
     # Draw tracked obstacles with LiDAR distance
     for tr in tracks:
-        dist_m = tr.smoothed_distance_m or tr.distance_m
-        if dist_m and dist_m <= max_range_m:
+        dist_m = tr.smoothed_distance_m if tr.smoothed_distance_m is not None else 0.0
+        if dist_m > 0.0 and dist_m <= max_range_m:
             # Lateral offset from bbox center
             img_cx = (tr.x1 + tr.x2) / 2.0
             lat_m = ((img_cx - 960) / 1325.0) * dist_m
@@ -224,13 +224,13 @@ def run_lidar_camera_fusion():
         # Draw YOLO + LiDAR Bounding Boxes
         for tr in confirmed_tracks:
             x1, y1, x2, y2 = map(int, [tr.x1, tr.y1, tr.x2, tr.y2])
-            dist_val = tr.smoothed_distance_m or tr.distance_m
+            dist_str = f"{tr.smoothed_distance_m:.1f}m" if tr.smoothed_distance_m is not None else "--"
             ttc_str = f"TTC: {tr.ttc_s:.1f}s" if tr.ttc_s else "TTC: --"
             
             box_col = (0, 0, 255) if tr.risk == "HIGH" else (0, 165, 255) if tr.risk == "MEDIUM" else (0, 255, 0)
             cv2.rectangle(hud_frame, (x1, y1), (x2, y2), box_col, 2)
             
-            label_text = f"{tr.label.upper()} | {dist_val:.1f}m [LiDAR] | {ttc_str}"
+            label_text = f"{tr.label.upper()} | {dist_str} [LiDAR] | {ttc_str}"
             cv2.rectangle(hud_frame, (x1, y1 - 22), (x1 + len(label_text)*9, y1), box_col, -1)
             cv2.putText(hud_frame, label_text, (x1 + 4, y1 - 6),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 1, cv2.LINE_AA)
