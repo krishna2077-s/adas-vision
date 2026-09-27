@@ -9,7 +9,7 @@ This is the standalone **ADAS Scenario Lab** module, an additive layer over the 
 - **Headless Execution:** Runs MATLAB in `-batch` mode in the background.
 - **Deterministic Explanations:** Extracts results via `export_result_json.m` and provides data-backed explanations without LLM hallucination.
 - **Stress Testing:** Parameter sweep engine to detect failure boundaries.
-
+-
 ## Setup
 
 1. Install Python dependencies:
