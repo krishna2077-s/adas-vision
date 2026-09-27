@@ -1,0 +1,46 @@
+[
+  {
+    "id": "template_cattle_crossing",
+    "name": "Sudden Cattle Crossing",
+    "description": "Two cows enter the road unexpectedly from the right shoulder",
+    "tags": ["cattle", "rural", "emergency-stop"],
+    "scenario": {
+      "scenario_id": "template_cattle_crossing",
+      "metadata": {
+        "name": "Sudden Cattle Crossing",
+        "description": "Two cows enter the road unexpectedly from the right shoulder",
+        "source": "template",
+        "created_at": "2026-09-27T00:00:00Z"
+      },
+      "road": { "type": "village_road", "lane_half_width_m": 3.5, "length_m": 180 },
+      "ego_vehicle": { "initial_speed_kmh": 30, "goal_x_m": 160 },
+      "actors": [
+        { "id": "cow1", "class": "cow", "initial_x_m": 75, "initial_y_m": -4.5,
+          "initial_vx_mps": 0.05, "initial_vy_mps": 0.85,
+          "behaviour": "crossing", "behaviour_trigger_s": 2.5, "behaviour_y_target_m": 3.8 }
+      ]
+    }
+  },
+  {
+    "id": "template_auto_cutin",
+    "name": "Auto-Rickshaw Cut-In",
+    "description": "Auto-rickshaw cuts in from the left lane without warning",
+    "tags": ["auto-rickshaw", "urban", "cut-in"],
+    "scenario": {
+      "scenario_id": "template_auto_cutin",
+      "metadata": {
+        "name": "Auto-Rickshaw Cut-In",
+        "description": "Auto-rickshaw cuts in from the left lane without warning",
+        "source": "template",
+        "created_at": "2026-09-27T00:00:00Z"
+      },
+      "road": { "type": "urban_street", "lane_half_width_m": 3.5, "length_m": 200 },
+      "ego_vehicle": { "initial_speed_kmh": 40, "goal_x_m": 180 },
+      "actors": [
+        { "id": "auto1", "class": "auto_rickshaw", "initial_x_m": 40, "initial_y_m": 3.0,
+          "initial_vx_mps": 5.0, "initial_vy_mps": -1.5,
+          "behaviour": "cut_in", "behaviour_trigger_s": 1.0, "behaviour_y_target_m": 0.0 }
+      ]
+    }
+  }
+]
