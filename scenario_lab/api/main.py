@@ -292,7 +292,7 @@ async def get_assets_library_endpoint():
     return get_asset_library()
 
 
-@app.get("/api/v1/health")
+@app.api_route("/api/v1/health", methods=["GET", "HEAD"])
 async def health_check():
     return {
         "status": "healthy",
@@ -314,7 +314,7 @@ if os.path.exists(FRONTEND_DIST):
     if os.path.exists(assets_dir):
         app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
-    @app.get("/{full_path:path}")
+    @app.api_route("/{full_path:path}", methods=["GET", "HEAD"])
     async def serve_frontend(full_path: str):
         if full_path.startswith("api/"):
             raise HTTPException(status_code=404, detail="API route not found")
