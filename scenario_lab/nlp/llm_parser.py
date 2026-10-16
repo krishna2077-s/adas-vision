@@ -2,7 +2,11 @@ import os
 import json
 import time
 import datetime
-from google import genai
+
+try:
+    from google import genai
+except (ImportError, AttributeError, Exception):
+    genai = None
 
 from scenario_lab.schema.scenario_schema import Scenario
 from scenario_lab.nlp.default_filler import DefaultFiller
@@ -15,14 +19,21 @@ MAX_RETRIES = 3
 class LLMParser:
     def __init__(self, api_key: str = None):
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
-        if self.api_key:
-            self.client = genai.Client(api_key=self.api_key)
+        if self.api_key and genai is not None:
+            try:
+                self.client = genai.Client(api_key=self.api_key)
+            except Exception as e:
+                print(f"[LLMParser] Warning: Failed to initialize genai client: {e}")
+                self.client = None
         else:
             self.client = None
 
         prompt_path = os.path.join(os.path.dirname(__file__), 'prompt_templates', 'system_prompt.txt')
-        with open(prompt_path, 'r') as f:
-            self.system_prompt = f.read()
+        if os.path.exists(prompt_path):
+            with open(prompt_path, 'r', encoding='utf-8') as f:
+                self.system_prompt = f.read()
+        else:
+            self.system_prompt = ""
 
     def _generate_with_retry(self, text: str) -> str:
         """Try each model with exponential backoff on 503 overload errors."""
