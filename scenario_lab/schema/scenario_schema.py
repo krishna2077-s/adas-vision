@@ -3,8 +3,8 @@ from typing import List, Optional, Literal
 
 class Metadata(BaseModel):
     name: str
-    description: str
-    source: Literal["nlp", "template", "builder", "variant", "sweep"]
+    description: str = ""
+    source: Literal["nlp", "template", "builder", "variant", "sweep", "osm"]
     created_at: str
     tags: List[str] = []
     original_text: Optional[str] = None
@@ -37,11 +37,12 @@ class Actor(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     id: str
     actor_class: Literal[
-        "cow", "buffalo", "dog", "person", "child", 
+        "cow", "buffalo", "dog", "goat", "person", "pedestrian", "child", 
         "motorcycle", "scooter", "bicycle", 
         "auto_rickshaw", "e_rickshaw", 
         "pushcart", "thela", 
-        "car", "suv", "bus", "truck", "tractor"
+        "car", "suv", "bus", "truck", "tractor",
+        "barricade", "barrier", "police_barricade", "construction_barrier", "pothole", "obstacle"
     ] = Field(alias="class")
     initial_x_m: float
     initial_y_m: float

@@ -1,0 +1,53 @@
+{
+  "schema_version": "1.0",
+  "scenario_id": "template_cattle_crossing",
+  "parent_id": null,
+  "metadata": {
+    "name": "Sudden Cattle Crossing",
+    "description": "Two cows enter the road unexpectedly from the right shoulder",
+    "source": "template",
+    "created_at": "2026-09-27T00:00:00Z",
+    "tags": [],
+    "original_text": null,
+    "version": 1
+  },
+  "road": {
+    "type": "village_road",
+    "lane_half_width_m": 3.5,
+    "length_m": 180.0,
+    "markings": "none",
+    "surface": "tarmac",
+    "has_shoulder": false
+  },
+  "environment": null,
+  "ego_vehicle": {
+    "initial_speed_kmh": 30.0,
+    "initial_x_m": 0.0,
+    "initial_y_m": 0.0,
+    "initial_heading_deg": 0.0,
+    "goal_x_m": 160.0,
+    "goal_y_m": 0.0,
+    "goal_tolerance_m": 4.0,
+    "mode": "adaptive"
+  },
+  "actors": [
+    {
+      "id": "cow1",
+      "class": "cow",
+      "initial_x_m": 75.0,
+      "initial_y_m": -4.5,
+      "initial_vx_mps": 0.05,
+      "initial_vy_mps": 0.85,
+      "width_m": null,
+      "length_m": null,
+      "behaviour": "crossing",
+      "behaviour_trigger_s": 2.5,
+      "behaviour_y_target_m": 3.8
+    }
+  ],
+  "simulation_parameters": {
+    "dt_s": 0.033,
+    "max_time_s": 35.0
+  },
+  "sweep_spec": null
+}

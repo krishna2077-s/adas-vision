@@ -128,13 +128,15 @@ ROAD_FILL_ALPHA       = 0.35
 # Guidance is capped (LEARNED_CONF_CAP) — drivable-area, not paint-precise.
 # ---------------------------------------------------------------------------
 ENABLE_LEARNED_ROAD  = True
+ECOTTA_ADAPT         = False    # Enable CVPR 2023 EcoTTA continual test-time adaptation (requires torch backend)
+
 # Architecture must match the weights file:
 #   "lraspp"    -> LRASPP MobileNetV3      (Phase 6c, ~6 fps @768x432, drivable_idd_full_best.pth)
 #   "deeplabv3" -> DeepLabV3 MobileNetV3   (Phase 7,  ~2.6 fps @768x432, richer ASPP head + augmentation)
 LEARNED_ARCH         = "lraspp"
 LEARNED_MODEL_PATH   = "drivable_idd_lraspp_adv_best.pth"  # Phase 12 adverse fine-tune (train_local.py --adverse): night+fog+rain IoU 0.83->0.91, clean held 0.92; was drivable_idd_lraspp_aug_best.pth
-LEARNED_INPUT_W      = 640     # inference resolution (lower = faster; torch/CUDA backend resizes dynamically)
-LEARNED_INPUT_H      = 360
+LEARNED_INPUT_W      = 768     # inference resolution (must match OpenVINO export shape if using OpenVINO)
+LEARNED_INPUT_H      = 432
 LEARNED_NUM_THREADS  = 0       # 0 = leave torch default; set to physical cores to cap CPU use
 LEARNED_HORIZON_FRAC = 0.35    # ignore rows above this (far field / sky)
 LEARNED_BONNET_FRAC  = 0.93    # ignore the bonnet below this
@@ -245,7 +247,7 @@ YOLO_IOU_THRESHOLD  = 0.45   # Non-max-suppression IoU threshold
 # that helps is input resolution YOLO_IMGSZ (640 default; 512 ~= 1.3x, 416 ~= 1.4x
 # but misses small/distant objects — a safety trade-off). Only "torch" can change
 # imgsz at run time; the ONNX/OpenVINO graphs are fixed at their export size.
-YOLO_IMGSZ      = 512             # inference resolution (512 = ~1.5x faster than 640 with minimal range loss)
+YOLO_IMGSZ      = 640             # inference resolution (must match export size 640 for OpenVINO)
 YOLO_BACKEND    = "openvino"      # "openvino" (Intel iGPU — FASTEST here) | "torch" | "onnx"
 YOLO_ONNX_MODEL = "yolov8n.onnx"  # optional; produced by export_yolo_onnx.py
 YOLO_OPENVINO_MODEL = "yolov8n_openvino_model"  # IR dir from export_yolo_openvino.py
@@ -525,8 +527,56 @@ CTRL_MAX_BRAKE_MPS2 = 6.0
 
 # --- Layer 7: driver monitoring — needs a driver-facing camera --------------
 ENABLE_DRIVER_MON      = True   # only runs when --driver-cam INDEX is provided
-DMS_EYES_CLOSED_FRAMES = 12     # consecutive no-eye frames -> DROWSY
-DMS_LOOKAWAY_RATIO     = 0.22   # face-centre offset (frac of width) -> DISTRACTED
+
+# ===========================================================================
+# MODULE 9v2 — Driver Monitoring System (DMS) — full upgrade
+# ===========================================================================
+# Uses MediaPipe FaceMesh + Hands for gaze, head-pose, EAR, PERCLOS and
+# hands-on-wheel detection. Falls back to Haar cascades when mediapipe is
+# absent (zero extra deps, less accurate).  Advisory / research only.
+
+# --- Backend selection -------------------------------------------------------
+DMS_BACKEND             = "mediapipe"  # "mediapipe" (full) | "haar" (legacy fallback)
+
+# --- Sub-feature toggles -----------------------------------------------------
+DMS_ENABLE_GAZE         = True   # head-pose + gaze zone (requires mediapipe backend)
+DMS_ENABLE_HANDS        = True   # hands-on-wheel detection (requires mediapipe backend)
+DMS_ENABLE_PHONE        = True   # phone/object detection (fine-tuned State Farm classifier or YOLOv8n)
+DMS_BEHAVIOR_MODEL      = "runs/classify/driver_behavior_full/weights/best.pt"
+
+# --- Eye-closure (EAR) thresholds -------------------------------------------
+# EAR = Eye Aspect Ratio (Soukupova & Cech 2016): < threshold = closed eye.
+DMS_EAR_THRESH          = 0.20   # below this = eye closed
+DMS_BLINK_FRAMES        = 3      # <= this consecutive frames = normal blink, not drowsy
+DMS_PERCLOS_WINDOW      = 90     # rolling window for PERCLOS measurement (frames ~ 3 s @ 30 fps)
+DMS_PERCLOS_THRESH      = 0.15   # > 15% eyes-closed in the window -> drowsy criterion
+
+# --- Head-pose thresholds (degrees) -----------------------------------------
+DMS_YAW_THRESH_DEG      = 30.0   # face turned > this -> looking away
+DMS_PITCH_THRESH_DEG    = 15.0   # chin down > this  -> head nodding / phone-check
+
+# --- Legacy Haar parameters (used when backend = "haar") --------------------
+DMS_EYES_CLOSED_FRAMES  = 12     # consecutive no-eye frames -> DROWSY (Haar only)
+DMS_LOOKAWAY_RATIO      = 0.22   # face-centre offset (frac of frame width) -> DISTRACTED
+
+# --- Hands-on-wheel parameters -----------------------------------------------
+# "Wheel region" = lower part of the driver frame, centred horizontally.
+DMS_WHEEL_Y_FRAC        = 0.55   # wheel sits below this vertical fraction of the frame
+DMS_WHEEL_X_RANGE       = 0.40   # hands must be within +-40% of horizontal centre
+DMS_HANDS_WARN_FRAMES   = 45     # no-hands warning after N consecutive frames (~1.5 s @ 30 fps)
+
+# --- Distraction / drowsiness consecutive-frame gates -----------------------
+DMS_DISTRACT_FRAMES     = 30     # consecutive distracted frames before DISTRACTED state
+DMS_DROWSY_FRAMES       = 20     # consecutive drowsy-criterion frames before DROWSY state
+
+# --- Decision engine integration (opt-in) ------------------------------------
+# When True, certain DMS states can raise the longitudinal decision to CAUTION.
+# False (default) keeps DMS purely advisory (chip on HUD only, no logic change).
+DMS_AFFECT_DECISION     = False
+DMS_CAUTION_STATES      = {"DROWSY", "PHONE"}   # states that can raise CAUTION
+
+# --- HUD chip appearance -----------------------------------------------------
+DMS_CHIP_H              = 20     # height of each row in the HUD chip (px)
 
 # ===========================================================================
 # MODULE 10 — Forward Collision Warning (driver-facing staged alert)

@@ -19,13 +19,13 @@ def test_full_pipeline():
         parser = LLMParser()
         text = "A motorcycle approaches head-on on the wrong side of the village road at 30 km/h, about 50m ahead."
         scenario, assumptions = parser.parse_text(text)
-        print("✅ Scenario parsed successfully.")
+        print("[PASS] Scenario parsed successfully.")
         print(f"Scenario Name: {scenario.metadata.name}")
         print("Assumptions made:")
         for a in assumptions:
             print(f" - {a}")
     except ValueError as e:
-        print(f"❌ NLP Parsing failed (Check GEMINI_API_KEY): {e}")
+        print(f"[FAIL] NLP Parsing failed (Check GEMINI_API_KEY): {e}")
         return
 
     # 2. MATLAB Script Generation
@@ -36,16 +36,16 @@ def test_full_pipeline():
     
     adapter = MatlabAdapter(matlab_dir, generated_dir)
     script_path, result_path = adapter.generate_script(scenario)
-    print(f"✅ Script generated at: {os.path.basename(script_path)}")
+    print(f"[PASS] Script generated at: {os.path.basename(script_path)}")
 
     # 3. MATLAB Execution
     print("\\n[3] Executing MATLAB in batch mode (this takes ~15-30s)...")
     runner = MatlabRunner(matlab_dir)
     try:
         raw_result = runner.run(script_path, result_path)
-        print("✅ MATLAB Execution completed.")
+        print("[PASS] MATLAB Execution completed.")
     except Exception as e:
-        print(f"❌ MATLAB Execution failed: {e}")
+        print(f"[FAIL] MATLAB Execution failed: {e}")
         return
 
     # 4. Result Explanation
@@ -56,7 +56,7 @@ def test_full_pipeline():
     for ev in sim_result.explanation.critical_events:
         print(f" - {ev}")
         
-    print("\\n🎉 End-to-End Pipeline Successful!")
+    print("\\n[SUCCESS] End-to-End Pipeline Successful!")
 
 if __name__ == "__main__":
     test_full_pipeline()
