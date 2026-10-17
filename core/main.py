@@ -198,6 +198,24 @@ def run(
     except Exception as exc:
         logger.warning(f"Advisory-sim layers disabled ({exc}).")
 
+    # ── Module 15: TinyFish Web Hazard Scout (Optional / Hackathon) ───────
+    tinyfish_scout = None
+    if getattr(cfg, "ENABLE_TINYFISH", False):
+        try:
+            from tinyfish_scout import TinyFishRoadScout
+            tinyfish_scout = TinyFishRoadScout(
+                api_key=getattr(cfg, "TINYFISH_API_KEY", ""),
+                location=getattr(cfg, "TINYFISH_LOCATION", "NH48 Delhi-Gurgaon"),
+                poll_interval_s=getattr(cfg, "TINYFISH_POLL_INTERVAL_S", 60.0),
+            )
+            if tinyfish_scout.is_available():
+                tinyfish_scout.start_background_scout()
+                logger.info(f"TinyFish Scout (Module 15) active for location: {cfg.TINYFISH_LOCATION}")
+            else:
+                tinyfish_scout = None
+        except Exception as exc:
+            logger.warning(f"TinyFish Scout initialization skipped: {exc}")
+
     # ── Optional writer ────────────────────────────────────────────────────
     writer = None
     if save_path:
@@ -412,6 +430,13 @@ def run(
             except Exception as exc:
                 logger.debug(f"advisory-sim overlay skipped: {exc}")
 
+            # ── Module 15: TinyFish live route hazard chip ───────────
+            if tinyfish_scout is not None:
+                try:
+                    annotated = tinyfish_scout.draw_chip(annotated)
+                except Exception as exc:
+                    logger.debug(f"TinyFish chip draw skipped: {exc}")
+
             # ── Module 10: Forward Collision Warning (drawn LAST — a ──
             # collision alert must never be occluded by another overlay).
             if fcw is not None:
@@ -490,6 +515,8 @@ def run(
         writer.release()
     if drive_logger is not None:
         drive_logger.close()
+    if tinyfish_scout is not None:
+        tinyfish_scout.stop_background_scout()
     cv2.destroyAllWindows()
 
 
@@ -541,6 +568,10 @@ Examples
                    help="Apply Pro-RandConv (CVPR 2023) to simulate extreme domains (weather/texture).")
     p.add_argument("--ecotta-adapt", action="store_true",
                    help="Enable EcoTTA (CVPR 2023) continuous test-time adaptation for road detection.")
+    p.add_argument("--tinyfish", action="store_true",
+                   help="Enable TinyFish AI live route hazard scout (Module 15).")
+    p.add_argument("--tinyfish-location", type=str, default=getattr(cfg, "TINYFISH_LOCATION", "NH48 Delhi-Gurgaon"),
+                   help="Location/route to scout via TinyFish.")
 
     return p.parse_args()
 
@@ -551,6 +582,10 @@ if __name__ == "__main__":
         cfg.ENABLE_ASYNC_DETECTION = True
     if args.ecotta_adapt:
         cfg.ECOTTA_ADAPT = True
+    if args.tinyfish:
+        cfg.ENABLE_TINYFISH = True
+    if args.tinyfish_location:
+        cfg.TINYFISH_LOCATION = args.tinyfish_location
         
     source = args.camera_index if args.camera else args.video
     run(

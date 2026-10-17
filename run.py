@@ -90,6 +90,11 @@ if __name__ == "__main__":
         runpy.run_path(str(ROOT / "perception" / "driver_monitor_demo.py"),
                        run_name="__main__")
 
+    elif subcmd in ("scout", "tinyfish"):
+        import runpy
+        runpy.run_path(str(ROOT / "perception" / "tinyfish_scout.py"),
+                       run_name="__main__")
+
     elif subcmd in ("eval", "evaluate"):
         import runpy
         runpy.run_path(str(ROOT / "evaluation" / "evaluate.py"), run_name="__main__")

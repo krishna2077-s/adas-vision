@@ -636,3 +636,12 @@ SIGN_VOTE_MIN     = 3            # min votes in the window to accept
 SIGN_ROI_TOP_FRAC = 0.15         # ignore proposals above/below this band (signs sit
 SIGN_ROI_BOT_FRAC = 0.75         # in the upper-middle of the view, not on the bonnet)
 COLOR_SIGN_BOX    = (0, 215, 255)   # yellow-ish (BGR)
+
+# ===========================================================================
+# MODULE 15 — TinyFish Web Hazard Scout (Optional / Hackathon Integration)
+# ===========================================================================
+import os as _os
+ENABLE_TINYFISH          = _os.environ.get("ENABLE_TINYFISH", "false").lower() in ("1", "true", "yes")
+TINYFISH_API_KEY         = _os.environ.get("TINYFISH_API_KEY", "")
+TINYFISH_LOCATION        = _os.environ.get("TINYFISH_LOCATION", "NH48 Delhi-Gurgaon")
+TINYFISH_POLL_INTERVAL_S = float(_os.environ.get("TINYFISH_POLL_INTERVAL_S", "60.0"))
