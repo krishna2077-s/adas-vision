@@ -141,7 +141,8 @@ class DecisionEngine:
     # Public API
     # ------------------------------------------------------------------
 
-    def process(self, lane_result, tracks, detection_age_s: float = 0.0) -> DrivingDecision:
+    def process(self, lane_result, tracks, detection_age_s: float = 0.0,
+                dms_result=None) -> DrivingDecision:
         """
         Fuse one frame of lane result + object tracks into a driving decision.
 
@@ -154,6 +155,12 @@ class DecisionEngine:
         detections; when it exceeds DETECTION_LATENCY_BUDGET_S the engine treats
         perception as stale and degrades (the real-time fail-safe). Defaults to 0
         for the synchronous pipeline, where detection is per-frame.
+
+        dms_result: optional AttentionResult from Module 9 (DriverMonitorV2).
+        When cfg.DMS_AFFECT_DECISION is True and the driver is in a critical state
+        (e.g. DROWSY, PHONE), the committed longitudinal level is raised to at
+        least CAUTION. When False (default) the dms_result is advisory only and
+        has no effect on the arbitrated decision.
         """
         self.frame_index += 1
         raw_dt = self._measure_dt()             # only used for the fps trust gate
@@ -241,6 +248,19 @@ class DecisionEngine:
                 floor_reason = (f"reduced cadence -- {obj.label} #{obj.id} "
                                 f"{obj.smoothed_distance_m:.1f}m in-path")
 
+        # ── R-DMS: driver monitoring floor (opt-in) ────────────────────
+        # When cfg.DMS_AFFECT_DECISION is True and the driver is in a
+        # critical state (e.g. DROWSY, PHONE), never output PROCEED — at
+        # least CAUTION. This is one-directional (can only raise, never
+        # lower) and gated behind a config flag so it is opt-in only.
+        if (dms_result is not None
+                and cfg.DMS_AFFECT_DECISION
+                and dms_result.state in cfg.DMS_CAUTION_STATES
+                and committed < CAUTION):
+            committed = CAUTION
+            floored = True
+            floor_reason = f"driver {dms_result.state} -- DMS alert"
+
         self.committed_level = committed
         self.emergency_dwell = self.emergency_dwell + 1 if committed == EMERGENCY_STOP else 0
 
@@ -289,7 +309,9 @@ class DecisionEngine:
             smoothed_distance_m=(round(hazard.smoothed_distance_m, 1)
                                  if hazard is not None and hazard.smoothed_distance_m is not None
                                  else None),
-            closing_speed_mps=round(hazard.closing_speed_mps, 1) if hazard is not None else 0.0,
+            closing_speed_mps=(round(hazard.closing_speed_mps, 1)
+                               if hazard is not None and hazard.closing_speed_mps is not None
+                               else 0.0),
             ttc_s=round(ttc, 1) if ttc is not None else None,
             hazard_side=hazard_side,
             tracked_count=len(confirmed),
@@ -416,11 +438,11 @@ class DecisionEngine:
         if advisory_hit is not None:
             return SLOW, "R4", f"[R4] SLOW: {advisory_hit.label} {advisory_hit.smoothed_distance_m:.0f}m ahead"
 
-        # ── R5 — SLOW for a MEDIUM-risk in-path object ────────────────
+        # ── R5 — SLOW for a MEDIUM-or-HIGH-risk in-path object ─────────
         if hazard is not None:
             margin = cfg.DEGRADED_DIST_MARGIN_M if degraded else 0.0
-            if hazard.risk == "MEDIUM" and hazard.smoothed_distance_m <= cfg.RISK_DISTANCE_MEDIUM + margin:
-                return SLOW, "R5", f"[R5] SLOW: {hazard.label} #{hazard.id} {hazard.smoothed_distance_m:.1f}m in-path (MEDIUM)"
+            if hazard.risk in ("MEDIUM", "HIGH") and hazard.smoothed_distance_m <= cfg.RISK_DISTANCE_MEDIUM + margin:
+                return SLOW, "R5", f"[R5] SLOW: {hazard.label} #{hazard.id} {hazard.smoothed_distance_m:.1f}m in-path ({hazard.risk})"
 
         # ── R6 — CAUTION (gentle in-path closing, or any nearby risk) ─
         if hazard is not None and hazard.ttc_s is not None and hazard.closing_speed_mps > cfg.MIN_CLOSING_MPS:
@@ -501,7 +523,7 @@ class DecisionEngine:
         if a < cfg.STEER_THRESHOLD_SLIGHT:
             action, mag = "KEEP_LANE", "NONE"
         else:
-            action = "CORRECT_LEFT" if offset > 0 else "CORRECT_RIGHT"
+            action = "CORRECT_RIGHT" if offset > 0 else "CORRECT_LEFT"
             if a < cfg.STEER_THRESHOLD_MODERATE:
                 mag = "SLIGHT"
             elif a < cfg.STEER_THRESHOLD_HARD:
