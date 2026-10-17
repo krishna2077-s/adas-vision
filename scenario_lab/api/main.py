@@ -21,6 +21,9 @@ from scenario_lab.osm.osm_importer import import_from_coordinates
 from scenario_lab.weather.weather_provider import get_weather, estimate_weather
 from scenario_lab.export.dsd_exporter import export_to_dsd_script
 from scenario_lab.export.opendrive_exporter import export_to_opendrive
+from scenario_lab.export.openscenario_exporter import export_to_openscenario
+from scenario_lab.weather.sensor_degradation import calculate_sensor_degradation
+from scenario_lab.stress.benchmark_engine import BenchmarkEngine
 from scenario_lab.api.assets_library import get_asset_library
 
 app = FastAPI(title="ADAS Scenario Lab API")
@@ -285,6 +288,69 @@ async def export_scenario_opendrive(scenario_id: str, scenario_body: Optional[Sc
 
 
 # ---------------------------------------------------------------------------
+# MathWorks RoadRunner / ASAM OpenSCENARIO (.xosc) XML Export Endpoint
+# ---------------------------------------------------------------------------
+@app.api_route("/api/v1/scenarios/{scenario_id}/export/openscenario", methods=["GET", "POST"])
+async def export_scenario_openscenario(scenario_id: str, scenario_body: Optional[Scenario] = None):
+    scenario = scenario_body or _resolve_scenario(scenario_id)
+    if not scenario:
+        raise HTTPException(status_code=404, detail=f"Scenario '{scenario_id}' not found")
+
+    if scenario_body:
+        scenario_store.save(scenario_body)
+
+    try:
+        xosc_xml = export_to_openscenario(scenario)
+        filename = f"{scenario.scenario_id}.xosc"
+        return {"xosc": xosc_xml, "filename": filename}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Head-to-Head Comparative Benchmark (Adaptive vs Baseline ADAS)
+# ---------------------------------------------------------------------------
+@app.api_route("/api/v1/scenarios/{scenario_id}/benchmark", methods=["GET", "POST"])
+async def benchmark_scenario_endpoint(scenario_id: str, scenario_body: Optional[Scenario] = None):
+    scenario = scenario_body or _resolve_scenario(scenario_id)
+    if not scenario:
+        raise HTTPException(status_code=404, detail=f"Scenario '{scenario_id}' not found")
+
+    if scenario_body:
+        scenario_store.save(scenario_body)
+
+    try:
+        benchmark_results = BenchmarkEngine.run_benchmark(scenario)
+        return benchmark_results
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Sensor Perception Degradation & Pavement Friction Endpoint
+# ---------------------------------------------------------------------------
+@app.get("/api/v1/weather/sensor-degradation")
+async def get_sensor_degradation_endpoint(
+    weather: str = "clear",
+    time_of_day: str = "day",
+    surface: str = "tarmac",
+    road_wetness: Optional[float] = None,
+    speed_kmh: float = 40.0,
+):
+    try:
+        profile = calculate_sensor_degradation(
+            weather=weather,
+            time_of_day=time_of_day,
+            surface=surface,
+            road_wetness=road_wetness,
+            ego_speed_kmh=speed_kmh,
+        )
+        return profile.to_dict()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
 # Indian 3D Road Asset Library Catalogue Endpoint
 # ---------------------------------------------------------------------------
 @app.get("/api/v1/assets/library")
@@ -298,7 +364,16 @@ async def health_check():
         "status": "healthy",
         "version": "1.0.0",
         "simulation_engine": "kinematics_python",
-        "features": ["osm_import", "climate_weather", "dsd_matlab", "opendrive_roadrunner", "indian_assets"]
+        "features": [
+            "osm_import",
+            "climate_weather",
+            "dsd_matlab",
+            "opendrive_roadrunner",
+            "openscenario_roadrunner",
+            "head_to_head_benchmark",
+            "sensor_degradation_physics",
+            "indian_assets",
+        ],
     }
 
 

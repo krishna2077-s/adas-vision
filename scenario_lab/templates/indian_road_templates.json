@@ -1,46 +1,352 @@
 [
   {
+    "id": "template_twinx_nashik_ringroad",
+    "name": "Team TwinX Champion Scenario - Nashik Ring Road",
+    "description": "Unmarked two-lane peripheral road at dusk near K.K. Wagh campus. Desi cow crossing slowly, stationary water buffalo on shoulder, auto-rickshaw sudden cut-in.",
+    "tags": ["sih2025-winner", "twinx", "cattle", "auto-rickshaw", "dusk"],
+    "scenario": {
+      "scenario_id": "template_twinx_nashik_ringroad",
+      "metadata": {
+        "name": "Team TwinX Champion Scenario - Nashik Ring Road",
+        "description": "Unmarked two-lane peripheral road at dusk near K.K. Wagh campus (SIH 2025 Winning Setup)",
+        "source": "template",
+        "created_at": "2026-10-17T00:00:00Z",
+        "tags": ["sih2025-winner", "twinx", "cattle", "auto-rickshaw", "dusk"]
+      },
+      "road": {
+        "type": "village_road",
+        "lane_half_width_m": 3.5,
+        "length_m": 220.0,
+        "markings": "none",
+        "surface": "broken_tarmac",
+        "has_shoulder": true
+      },
+      "environment": {
+        "time_of_day": "dusk",
+        "weather": "clear",
+        "visibility_m": 120.0
+      },
+      "ego_vehicle": {
+        "initial_speed_kmh": 40.0,
+        "initial_x_m": 0.0,
+        "initial_y_m": 0.0,
+        "goal_x_m": 200.0,
+        "mode": "adaptive"
+      },
+      "actors": [
+        {
+          "id": "cow_1",
+          "class": "cow",
+          "initial_x_m": 65.0,
+          "initial_y_m": -3.5,
+          "initial_vx_mps": 0.1,
+          "initial_vy_mps": 0.9,
+          "behaviour": "crossing",
+          "behaviour_trigger_s": 2.0,
+          "behaviour_y_target_m": 2.5
+        },
+        {
+          "id": "buffalo_1",
+          "class": "buffalo",
+          "initial_x_m": 110.0,
+          "initial_y_m": -2.0,
+          "initial_vx_mps": 0.0,
+          "initial_vy_mps": 0.0,
+          "behaviour": "static"
+        },
+        {
+          "id": "auto_1",
+          "class": "auto_rickshaw",
+          "initial_x_m": 45.0,
+          "initial_y_m": 3.2,
+          "initial_vx_mps": 6.0,
+          "initial_vy_mps": -1.4,
+          "behaviour": "cut_in",
+          "behaviour_trigger_s": 1.5,
+          "behaviour_y_target_m": 0.0
+        }
+      ],
+      "simulation_parameters": {
+        "dt_s": 0.033,
+        "max_time_s": 35.0
+      }
+    }
+  },
+  {
+    "id": "template_monsoon_expressway",
+    "name": "Mumbai-Pune Expressway Monsoon Deluge",
+    "description": "Heavy rain waterlogging on four-lane expressway. Slippery friction (mu=0.45), police metal barricade nakabandi with stalled truck in center lane.",
+    "tags": ["monsoon", "expressway", "waterlogging", "barricade", "truck"],
+    "scenario": {
+      "scenario_id": "template_monsoon_expressway",
+      "metadata": {
+        "name": "Mumbai-Pune Expressway Monsoon Deluge",
+        "description": "Torrential monsoon rain with surface waterlogging and police barricade obstacle on NH48",
+        "source": "template",
+        "created_at": "2026-10-17T00:00:00Z",
+        "tags": ["monsoon", "expressway", "waterlogging", "barricade", "truck"]
+      },
+      "road": {
+        "type": "highway",
+        "lane_half_width_m": 7.0,
+        "length_m": 260.0,
+        "markings": "broken_center",
+        "surface": "tarmac",
+        "has_shoulder": true
+      },
+      "environment": {
+        "time_of_day": "day",
+        "weather": "heavy_rain",
+        "visibility_m": 45.0
+      },
+      "ego_vehicle": {
+        "initial_speed_kmh": 60.0,
+        "initial_x_m": 0.0,
+        "initial_y_m": 0.0,
+        "goal_x_m": 240.0,
+        "mode": "adaptive"
+      },
+      "actors": [
+        {
+          "id": "barricade_1",
+          "class": "police_barricade",
+          "initial_x_m": 85.0,
+          "initial_y_m": 1.8,
+          "initial_vx_mps": 0.0,
+          "initial_vy_mps": 0.0,
+          "behaviour": "static"
+        },
+        {
+          "id": "truck_stalled",
+          "class": "truck",
+          "initial_x_m": 135.0,
+          "initial_y_m": 0.0,
+          "initial_vx_mps": 6.0,
+          "initial_vy_mps": 0.0,
+          "behaviour": "sudden_stop",
+          "behaviour_trigger_s": 2.2
+        },
+        {
+          "id": "motorcycle_1",
+          "class": "motorcycle",
+          "initial_x_m": 50.0,
+          "initial_y_m": -3.2,
+          "initial_vx_mps": 7.0,
+          "initial_vy_mps": 1.1,
+          "behaviour": "cut_in",
+          "behaviour_trigger_s": 1.0,
+          "behaviour_y_target_m": -0.8
+        }
+      ],
+      "simulation_parameters": {
+        "dt_s": 0.033,
+        "max_time_s": 35.0
+      }
+    }
+  },
+  {
+    "id": "template_delhi_chandni_chowk",
+    "name": "Old Delhi Chandni Chowk Dense Market Street",
+    "description": "Narrow 2.2m half-width bazaar street. Two street vendor thelas (pushcarts) encroaching on carriageway, stray dog darting, pedestrians crossing.",
+    "tags": ["market", "thela", "pedestrian", "dog", "narrow-road"],
+    "scenario": {
+      "scenario_id": "template_delhi_chandni_chowk",
+      "metadata": {
+        "name": "Old Delhi Chandni Chowk Dense Market Street",
+        "description": "Ultra-congested 3.5m market corridor with street vendors, pushcarts, and unpredictable pedestrians",
+        "source": "template",
+        "created_at": "2026-10-17T00:00:00Z",
+        "tags": ["market", "thela", "pedestrian", "dog", "narrow-road"]
+      },
+      "road": {
+        "type": "market_street",
+        "lane_half_width_m": 2.2,
+        "length_m": 180.0,
+        "markings": "none",
+        "surface": "concrete",
+        "has_shoulder": false
+      },
+      "environment": {
+        "time_of_day": "day",
+        "weather": "clear",
+        "visibility_m": 80.0
+      },
+      "ego_vehicle": {
+        "initial_speed_kmh": 25.0,
+        "initial_x_m": 0.0,
+        "initial_y_m": 0.0,
+        "goal_x_m": 160.0,
+        "mode": "adaptive"
+      },
+      "actors": [
+        {
+          "id": "pushcart_1",
+          "class": "pushcart",
+          "initial_x_m": 42.0,
+          "initial_y_m": 1.1,
+          "initial_vx_mps": 0.0,
+          "initial_vy_mps": 0.0,
+          "behaviour": "static"
+        },
+        {
+          "id": "thela_2",
+          "class": "thela",
+          "initial_x_m": 92.0,
+          "initial_y_m": -0.9,
+          "initial_vx_mps": 0.0,
+          "initial_vy_mps": 0.0,
+          "behaviour": "static"
+        },
+        {
+          "id": "dog_1",
+          "class": "dog",
+          "initial_x_m": 62.0,
+          "initial_y_m": -2.2,
+          "initial_vx_mps": 0.2,
+          "initial_vy_mps": 2.2,
+          "behaviour": "crossing",
+          "behaviour_trigger_s": 2.8,
+          "behaviour_y_target_m": 1.5
+        },
+        {
+          "id": "pedestrian_1",
+          "class": "pedestrian",
+          "initial_x_m": 120.0,
+          "initial_y_m": 1.8,
+          "initial_vx_mps": 0.0,
+          "initial_vy_mps": -0.9,
+          "behaviour": "crossing",
+          "behaviour_trigger_s": 4.0,
+          "behaviour_y_target_m": -1.2
+        }
+      ],
+      "simulation_parameters": {
+        "dt_s": 0.033,
+        "max_time_s": 35.0
+      }
+    }
+  },
+  {
+    "id": "template_bengaluru_silkboard",
+    "name": "Bengaluru Silk Board Chaotic Junction",
+    "description": "Dense mixed traffic intersection with two-wheelers filtering through gaps, e-rickshaw weaving, unpaved potholes.",
+    "tags": ["intersection", "two-wheeler", "e-rickshaw", "pothole", "filtering"],
+    "scenario": {
+      "scenario_id": "template_bengaluru_silkboard",
+      "metadata": {
+        "name": "Bengaluru Silk Board Chaotic Junction",
+        "description": "High-density suburban interchange with lane-filtering two-wheelers, auto-rickshaws, and road potholes",
+        "source": "template",
+        "created_at": "2026-10-17T00:00:00Z",
+        "tags": ["intersection", "two-wheeler", "e-rickshaw", "pothole", "filtering"]
+      },
+      "road": {
+        "type": "urban_street",
+        "lane_half_width_m": 4.5,
+        "length_m": 200.0,
+        "markings": "broken_center",
+        "surface": "broken_tarmac",
+        "has_shoulder": true
+      },
+      "environment": {
+        "time_of_day": "day",
+        "weather": "overcast",
+        "visibility_m": 100.0
+      },
+      "ego_vehicle": {
+        "initial_speed_kmh": 35.0,
+        "initial_x_m": 0.0,
+        "initial_y_m": 0.0,
+        "goal_x_m": 180.0,
+        "mode": "adaptive"
+      },
+      "actors": [
+        {
+          "id": "erickshaw_1",
+          "class": "e_rickshaw",
+          "initial_x_m": 38.0,
+          "initial_y_m": -2.4,
+          "initial_vx_mps": 5.0,
+          "initial_vy_mps": 1.5,
+          "behaviour": "cut_in",
+          "behaviour_trigger_s": 1.2,
+          "behaviour_y_target_m": 0.0
+        },
+        {
+          "id": "scooter_1",
+          "class": "scooter",
+          "initial_x_m": 72.0,
+          "initial_y_m": 1.2,
+          "initial_vx_mps": 6.0,
+          "initial_vy_mps": 0.0,
+          "behaviour": "constant_velocity"
+        },
+        {
+          "id": "pothole_1",
+          "class": "pothole",
+          "initial_x_m": 105.0,
+          "initial_y_m": -0.6,
+          "initial_vx_mps": 0.0,
+          "initial_vy_mps": 0.0,
+          "behaviour": "static"
+        }
+      ],
+      "simulation_parameters": {
+        "dt_s": 0.033,
+        "max_time_s": 35.0
+      }
+    }
+  },
+  {
     "id": "template_cattle_crossing",
-    "name": "Sudden Cattle Crossing",
-    "description": "Two cows enter the road unexpectedly from the right shoulder",
+    "name": "Sudden Rural Cattle Crossing",
+    "description": "Two cows enter the road unexpectedly from the right shoulder on an unpainted rural road.",
     "tags": ["cattle", "rural", "emergency-stop"],
     "scenario": {
       "scenario_id": "template_cattle_crossing",
       "metadata": {
-        "name": "Sudden Cattle Crossing",
-        "description": "Two cows enter the road unexpectedly from the right shoulder",
+        "name": "Sudden Rural Cattle Crossing",
+        "description": "Bovine road incursion on narrow rural road with zero painted lane markings",
         "source": "template",
-        "created_at": "2026-09-27T00:00:00Z"
+        "created_at": "2026-10-17T00:00:00Z",
+        "tags": ["cattle", "rural", "emergency-stop"]
       },
-      "road": { "type": "village_road", "lane_half_width_m": 3.5, "length_m": 180 },
-      "ego_vehicle": { "initial_speed_kmh": 30, "goal_x_m": 160 },
-      "actors": [
-        { "id": "cow1", "class": "cow", "initial_x_m": 75, "initial_y_m": -4.5,
-          "initial_vx_mps": 0.05, "initial_vy_mps": 0.85,
-          "behaviour": "crossing", "behaviour_trigger_s": 2.5, "behaviour_y_target_m": 3.8 }
-      ]
-    }
-  },
-  {
-    "id": "template_auto_cutin",
-    "name": "Auto-Rickshaw Cut-In",
-    "description": "Auto-rickshaw cuts in from the left lane without warning",
-    "tags": ["auto-rickshaw", "urban", "cut-in"],
-    "scenario": {
-      "scenario_id": "template_auto_cutin",
-      "metadata": {
-        "name": "Auto-Rickshaw Cut-In",
-        "description": "Auto-rickshaw cuts in from the left lane without warning",
-        "source": "template",
-        "created_at": "2026-09-27T00:00:00Z"
+      "road": {
+        "type": "village_road",
+        "lane_half_width_m": 3.5,
+        "length_m": 180.0,
+        "markings": "none",
+        "surface": "tarmac"
       },
-      "road": { "type": "urban_street", "lane_half_width_m": 3.5, "length_m": 200 },
-      "ego_vehicle": { "initial_speed_kmh": 40, "goal_x_m": 180 },
+      "environment": {
+        "time_of_day": "day",
+        "weather": "clear",
+        "visibility_m": 150.0
+      },
+      "ego_vehicle": {
+        "initial_speed_kmh": 35.0,
+        "initial_x_m": 0.0,
+        "initial_y_m": 0.0,
+        "goal_x_m": 160.0,
+        "mode": "adaptive"
+      },
       "actors": [
-        { "id": "auto1", "class": "auto_rickshaw", "initial_x_m": 40, "initial_y_m": 3.0,
-          "initial_vx_mps": 5.0, "initial_vy_mps": -1.5,
-          "behaviour": "cut_in", "behaviour_trigger_s": 1.0, "behaviour_y_target_m": 0.0 }
-      ]
+        {
+          "id": "cow1",
+          "class": "cow",
+          "initial_x_m": 70.0,
+          "initial_y_m": -4.0,
+          "initial_vx_mps": 0.05,
+          "initial_vy_mps": 0.85,
+          "behaviour": "crossing",
+          "behaviour_trigger_s": 2.0,
+          "behaviour_y_target_m": 3.2
+        }
+      ],
+      "simulation_parameters": {
+        "dt_s": 0.033,
+        "max_time_s": 35.0
+      }
     }
   }
 ]

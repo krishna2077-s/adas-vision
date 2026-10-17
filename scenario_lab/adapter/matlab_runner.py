@@ -66,6 +66,23 @@ def simulate_kinematics(scenario: Any) -> dict:
     min_clearance = 999.0
     arrived = False
 
+    # Environmental and Pavement Friction Context
+    env = getattr(scenario, "environment", None)
+    weather_cond = getattr(env, "weather", "clear") or "clear"
+    surf = getattr(road, "surface", "tarmac") or "tarmac"
+    try:
+        from scenario_lab.weather.sensor_degradation import calculate_sensor_degradation
+        deg = calculate_sensor_degradation(weather=weather_cond, surface=surf, ego_speed_kmh=v_kmh)
+        mu = deg.friction_coefficient
+        max_decel_limit = deg.max_braking_decel_mps2
+    except Exception:
+        mu = 0.85
+        max_decel_limit = 5.8
+
+    # In adaptive mode, safety distance and TTC scale up on wet/slippery roads
+    ttc_scale = max(1.0, 0.85 / mu) if is_adaptive else 1.0
+    dist_scale = max(1.0, 0.85 / mu) if is_adaptive else 1.0
+
     max_steps = int(max_time_s / dt)
     for step in range(max_steps):
         t = step * dt
@@ -90,6 +107,18 @@ def simulate_kinematics(scenario: Any) -> dict:
                     dir_y = 1.0 if a.y_target >= a.y else -1.0
                     if abs(a.y - a.y_target) > 0.05:
                         a.y += dir_y * 1.5 * dt
+                a.x += a.vx * dt
+            elif a.beh == "wrong_side":
+                # Oncoming wrong-side actor travelling against normal traffic flow
+                if a.vx >= -0.1:
+                    a.vx = -abs(a.vx) if abs(a.vx) > 0.1 else -7.0
+                a.x += a.vx * dt
+                a.y += a.vy * dt
+            elif a.beh == "gradual":
+                # Gradual lateral drift or wandering (e.g. cattle straying across lane)
+                dir_y = 1.0 if a.y_target >= a.y else -1.0
+                if abs(a.y - a.y_target) > 0.05:
+                    a.y += dir_y * 0.7 * dt
                 a.x += a.vx * dt
 
         # Check distances and evaluate collision risks
@@ -121,35 +150,58 @@ def simulate_kinematics(scenario: Any) -> dict:
                 elif dx < 32.0 and active_obstacle is None:
                     active_obstacle = a
 
-        # Adaptive lateral evasion (if in adaptive mode)
+        # Adaptive lateral evasion with multi-obstacle corridor cost evaluation
         if is_adaptive and active_obstacle is not None and (active_obstacle.x - ego_x > -1.5) and (active_obstacle.x - ego_x < 35.0):
             safe_clearance = (ego_w + active_obstacle.w) / 2.0 + 1.1
-            road_bound = lane_hw * 0.85
-            if active_obstacle.y <= 0:
-                target_evade_y = active_obstacle.y + safe_clearance
-                if target_evade_y > road_bound:
-                    target_evade_y = active_obstacle.y - safe_clearance
+            road_bound = lane_hw * 0.88
+
+            # Candidate lateral evasive coordinates
+            cand_right = active_obstacle.y + safe_clearance
+            cand_left = active_obstacle.y - safe_clearance
+
+            def evaluate_corridor_cost(cand_y: float) -> float:
+                if cand_y > road_bound or cand_y < -road_bound:
+                    return 9999.0  # Exceeds road bounds
+                cost = abs(cand_y) * 0.5  # Penalize extreme lateral displacement
+                for other_a in actors:
+                    if other_a is not active_obstacle:
+                        dx_o = other_a.x - ego_x
+                        if -2.0 < dx_o < 35.0:
+                            dy_o = abs(other_a.y - cand_y)
+                            min_needed = (ego_w + other_a.w) / 2.0 + 0.8
+                            if dy_o < min_needed:
+                                cost += 1000.0 * (min_needed - dy_o)
+                return cost
+
+            cost_r = evaluate_corridor_cost(cand_right)
+            cost_l = evaluate_corridor_cost(cand_left)
+
+            if cost_r < 500.0 and cost_r <= cost_l:
+                target_evade_y = max(-road_bound, min(road_bound, cand_right))
+            elif cost_l < 500.0:
+                target_evade_y = max(-road_bound, min(road_bound, cand_left))
             else:
-                target_evade_y = active_obstacle.y - safe_clearance
-                if target_evade_y < -road_bound:
-                    target_evade_y = active_obstacle.y + safe_clearance
-            target_evade_y = max(-road_bound, min(road_bound, target_evade_y))
+                # Both sides pinched by obstacles or curbs: hold corridor and brake
+                target_evade_y = ego_y
+                in_path_dist = min(in_path_dist, 3.5)
+                in_path_ttc = min(in_path_ttc, 0.9)
+
             dy_steer = target_evade_y - ego_y
             ego_y += math.copysign(min(abs(dy_steer), 2.2 * dt), dy_steer)
         elif abs(ego_y) > 0.05:
             ego_y -= math.copysign(min(abs(ego_y), 1.4 * dt), ego_y)
 
-        # ADAS Brain Decision Logic
-        if in_path_ttc < 1.1 or in_path_dist < 4.5:
+        # ADAS Brain Decision Logic with Weather & Friction Sensitivity
+        if in_path_ttc < (1.1 * ttc_scale) or in_path_dist < (4.5 * dist_scale):
             em_stop_c += 1
-            accel = -5.8  # Emergency braking
-        elif in_path_ttc < 2.0 or in_path_dist < 11.0:
+            accel = -min(5.8, max_decel_limit)  # Emergency braking physically capped by friction
+        elif in_path_ttc < (2.0 * ttc_scale) or in_path_dist < (11.0 * dist_scale):
             brake_c += 1
-            accel = -3.5  # Dynamic braking
-        elif in_path_ttc < 3.2 or in_path_dist < 20.0:
+            accel = -min(3.5, max_decel_limit * 0.75)  # Dynamic braking
+        elif in_path_ttc < (3.2 * ttc_scale) or in_path_dist < (20.0 * dist_scale):
             slow_c += 1
             accel = -1.6  # Controlled deceleration
-        elif in_path_dist < 32.0:
+        elif in_path_dist < (32.0 * dist_scale):
             caution_c += 1
             accel = -0.5  # Caution ease
         else:

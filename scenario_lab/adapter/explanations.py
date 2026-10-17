@@ -42,7 +42,7 @@ def build_explanation(result_data: dict, scenario_id: str, mode: str) -> Simulat
     return SimulationResult(
         result_id=result_id,
         scenario_id=scenario_id,
-        executed_at=datetime.datetime.utcnow().isoformat() + "Z",
+        executed_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
         mode=mode,
         arrived=arrived,
         t_total_s=t_total_s,

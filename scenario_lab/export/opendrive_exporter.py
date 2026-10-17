@@ -491,6 +491,19 @@ def _scenario_to_opendrive_xml(scenario: Scenario) -> ET.Element:
         has_shoulder=has_shoulder,
     )
 
+    # Surface & Pavement Friction for RoadRunner Physics
+    try:
+        from scenario_lab.weather.sensor_degradation import calculate_sensor_degradation
+        env_weather = getattr(scenario.environment, "weather", "clear") if scenario.environment else "clear"
+        env_tod = getattr(scenario.environment, "time_of_day", "day") if scenario.environment else "day"
+        deg = calculate_sensor_degradation(weather=env_weather, time_of_day=env_tod, surface=surface)
+        friction_val = deg.friction_coefficient
+    except Exception:
+        friction_val = 0.85
+
+    surface_elem = ET.SubElement(road_elem, "surface")
+    ET.SubElement(surface_elem, "friction", {"s": "0.0", "friction": f"{friction_val:.2f}"})
+
     # Objects
     _add_objects(road_elem, scenario.actors or [])
 
