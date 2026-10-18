@@ -3,39 +3,55 @@ import os
 import sys
 import time
 import threading
+import webbrowser
 
 def run_api():
-    print("Starting API Server on port 8000...")
+    print("[Scenario Lab] Starting API & Application Server on http://localhost:8000 ...")
     subprocess.run([sys.executable, "-m", "uvicorn", "scenario_lab.api.main:app", "--reload", "--port", "8000"])
 
 def run_frontend():
-    print("Starting Frontend on port 5173...")
     frontend_dir = os.path.join(os.path.dirname(__file__), "scenario_lab", "frontend")
+    node_modules = os.path.join(frontend_dir, "node_modules")
+
     if os.path.exists(frontend_dir):
-        # We need shell=True on windows for npm
+        if not os.path.exists(node_modules):
+            print("[Scenario Lab] Note: node_modules not detected. Installing frontend dev dependencies...")
+            res = subprocess.run("npm install", shell=True, cwd=frontend_dir)
+            if res.returncode != 0:
+                print("[Scenario Lab] npm install skipped/failed. Serving pre-compiled production build on http://localhost:8000")
+                return
+
+        print("[Scenario Lab] Starting Vite Dev Server on http://localhost:5173 ...")
         subprocess.run("npm run dev", shell=True, cwd=frontend_dir)
     else:
-        print("Frontend directory not found.")
+        print("[Scenario Lab] Frontend directory not found.")
 
 if __name__ == "__main__":
-    # Ensure dependencies are available
-    api_thread = threading.Thread(target=run_api)
-    api_thread.daemon = True
+    api_thread = threading.Thread(target=run_api, daemon=True)
     api_thread.start()
     
-    time.sleep(2) # Give API a moment to start
-    
-    frontend_thread = threading.Thread(target=run_frontend)
-    frontend_thread.daemon = True
+    time.sleep(2)  # Give API a moment to bind
+
+    frontend_thread = threading.Thread(target=run_frontend, daemon=True)
     frontend_thread.start()
     
-    print("\\n=== ADAS Scenario Lab ===")
-    print("API: http://localhost:8000")
-    print("Frontend: http://localhost:5173")
-    print("Press Ctrl+C to exit.\\n")
+    print("\n" + "=" * 60)
+    print("  🚀 ADAS Scenario Lab & TwinX Simulation Hub Active!")
+    print("=" * 60)
+    print("  ► Web Application : http://localhost:8000  (Pre-compiled SPA + API)")
+    print("  ► Vite Dev Server : http://localhost:5173  (HMR Live Code Edit)")
+    print("  ► API Swagger Docs: http://localhost:8000/docs")
+    print("=" * 60)
+    print("Press Ctrl+C to exit.\n")
+    
+    # Auto-open browser
+    try:
+        webbrowser.open("http://localhost:8000")
+    except Exception:
+        pass
     
     try:
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
-        print("\\nShutting down...")
+        print("\nShutting down ADAS Scenario Lab...")
