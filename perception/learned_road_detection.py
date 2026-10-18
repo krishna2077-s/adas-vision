@@ -123,6 +123,12 @@ class LearnedRoadDetector:
                     return
             except Exception:
                 pass
+        # EcoTTA requires PyTorch for gradient updates
+        if getattr(cfg, "ECOTTA_ADAPT", False):
+            logger.info("ECOTTA_ADAPT enabled - forcing PyTorch backend.")
+            self._load_torch()
+            return
+
         backend = getattr(cfg, "LEARNED_BACKEND", "torch").lower()
         if backend == "openvino" and self._load_openvino():
             return
@@ -236,6 +242,13 @@ class LearnedRoadDetector:
                 except Exception:
                     self._torch_device = "cpu"
             self.model = model
+            if getattr(cfg, "ECOTTA_ADAPT", False):
+                try:
+                    from ecotta_adaptor import EcoTTAWrapper
+                    self.model = EcoTTAWrapper(self.model, channels=2)
+                    logger.info("EcoTTA Test-Time Adaptation wrapper applied to learned road model (CVPR 2023).")
+                except ImportError as exc:
+                    logger.warning(f"Failed to load EcoTTA adaptor ({exc}) - continuing without adaptation.")
             self.backend = "torch"
             self.available = True
             logger.info(
@@ -319,7 +332,14 @@ class LearnedRoadDetector:
             offset = cx - result.frame_center_x
             result.lane_center_x = cx
             result.offset_px = offset
-            result.confidence = min(cfg.LEARNED_CONF_CAP, 0.5 + 0.4 * coverage)
+            
+            baseline_conf = min(cfg.LEARNED_CONF_CAP, 0.5 + 0.4 * coverage)
+            # DejaVu-inspired Spatial Uncertainty Check (CVPR 2023)
+            if getattr(self, "_last_entropy", 0.0) > 0.4:
+                # Capping confidence due to chaotic structural boundaries
+                baseline_conf *= 0.5
+                
+            result.confidence = baseline_conf
             result.steering = self._steering(offset)
             annotated = self._annotate(canvas, mask, centre, cx, offset)
         else:
@@ -342,6 +362,8 @@ class LearnedRoadDetector:
         x = (img.astype(np.float32) / 255.0 - _MEAN) / _STD
         x = np.ascontiguousarray(x.transpose(2, 0, 1))[None]      # (1, 3, H, W)
 
+        self._last_entropy = 0.0  # Reset for DejaVu gate
+
         if self.backend == "openvino":
             out = self.compiled(x)[self._ov_out]                     # (1, 2, H, W)
             pred = out.argmax(1).squeeze(0).astype(np.uint8)
@@ -349,8 +371,23 @@ class LearnedRoadDetector:
             out = self.session.run(None, {self._onnx_input: x})[0]   # (1, 2, H, W)
             pred = out.argmax(1).squeeze(0).astype(np.uint8)
         else:
-            with torch.no_grad():
-                out = self.model(torch.from_numpy(x).to(self._torch_device))["out"]
+            t_input = torch.from_numpy(x).to(self._torch_device)
+            # EcoTTA Test-Time Adaptation
+            if getattr(cfg, "ECOTTA_ADAPT", False) and hasattr(self.model, "adapt_step"):
+                out = self.model.adapt_step(t_input)
+            else:
+                with torch.no_grad():
+                    out = self.model(t_input)
+            
+            if isinstance(out, dict):
+                out = out["out"]
+                
+            # DejaVu-inspired Spatial Uncertainty Check (CVPR 2023)
+            # High entropy at boundaries = low structural confidence
+            probs = torch.softmax(out[0], dim=0).detach().cpu().numpy()
+            entropy = -np.sum(probs * np.log(probs + 1e-6), axis=0)
+            self._last_entropy = float(np.mean(entropy))
+            
             pred = out.argmax(1).squeeze(0).to("cpu").numpy().astype(np.uint8)
 
         mask = cv2.resize(pred, (self.w, self.h), interpolation=cv2.INTER_NEAREST) * 255

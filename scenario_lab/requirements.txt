@@ -1,0 +1,6 @@
+pydantic>=2.0
+jinja2
+jsonschema
+fastapi
+uvicorn
+requests>=2.28.0

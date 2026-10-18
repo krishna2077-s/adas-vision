@@ -59,7 +59,9 @@ def run(
     enable_lanes: bool = True,
     enable_objects: bool = True,
     driver_cam: int = None,
+    driver_video: str = None,
     log_path: str = None,
+    simulate_domain: bool = False,
 ) -> None:
     """
     Main loop: reads frames, runs enabled modules, displays the combined result.
@@ -176,15 +178,23 @@ def run(
         if cfg.ENABLE_CONTROL_SIM:
             from control_sim import SimController
             controller = SimController(w, h)
-        if cfg.ENABLE_DRIVER_MON and driver_cam is not None:
+        if cfg.ENABLE_DRIVER_MON and (driver_cam is not None or driver_video is not None):
             from driver_monitoring import DriverMonitor
-            dm = DriverMonitor()
+            dm_source = driver_cam if driver_cam is not None else driver_video
+            dm = DriverMonitor(frame_width=w, frame_height=h)
             if dm.available:
-                cap_d = cv2.VideoCapture(driver_cam)
+                cap_d = cv2.VideoCapture(dm_source)
                 if cap_d.isOpened():
                     driver_monitor, driver_cap = dm, cap_d
+                    logger.info(
+                        f"Driver monitor (Module 9v2): source={dm_source!r}, "
+                        f"backend={dm._backend_name}, "
+                        f"hands={'on' if dm._hands else 'off'}, "
+                        f"phone={'on' if dm._phone else 'off'}"
+                    )
                 else:
-                    logger.warning(f"Driver cam {driver_cam} not opened — driver monitoring off.")
+                    logger.warning(f"Driver cam/video {dm_source!r} could not be opened — driver monitoring off.")
+
     except Exception as exc:
         logger.warning(f"Advisory-sim layers disabled ({exc}).")
 
@@ -199,6 +209,14 @@ def run(
     screenshot_idx = 0
     last_status = None
     window_name = "ADAS Vision  (Q quit | D debug | P pause | S screenshot)"
+
+    # Create a resizable window up-front so large (e.g. 1080p) videos never
+    # bleed off screen — the user can drag/resize freely at any time.
+    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+    # Scale down to a sensible default if the source is wider than 1280px.
+    if w > 1280:
+        display_h = int(h * 1280 / w)
+        cv2.resizeWindow(window_name, 1280, display_h)
 
     logger.info("Starting. Press Q to quit.")
 
@@ -248,6 +266,14 @@ def run(
                 continue
             bad_frames = 0
 
+            # ── Pro-RandConv Domain Generalization Test (CVPR 2023) ────────
+            if simulate_domain:
+                try:
+                    from pro_randconv import pro_rand_conv
+                    frame = pro_rand_conv(frame, num_layers=3)
+                except ImportError:
+                    pass
+
             annotated = frame
             lane_result = None
             obj_result = None
@@ -260,32 +286,43 @@ def run(
             # ── Module 1: lanes (paint) → 1c: learned road → 1b: classical ───
             if lane_detector is not None:
                 lane_result, annotated = lane_detector.process(annotated)
-                if lane_result.confidence == 0.0:
-                    # No usable paint — follow the drivable road surface instead
-                    # (estimated guidance for unmarked roads). Detect on the RAW
-                    # frame; draw onto the annotated one. Prefer the learned
-                    # model; drop to the classical detector if it has no lock.
-                    got = False
-                    if learned_road_detector is not None:
-                        road_result, annotated = learned_road_detector.process(frame, draw_on=annotated)
-                        if road_result.confidence > 0.0:
-                            lane_result = road_result
-                            got = True
-                    if not got and road_detector is not None:
-                        road_result, annotated = road_detector.process(frame, draw_on=annotated)
-                        if road_result.confidence > 0.0:
-                            lane_result = road_result
-                lane_center_x = lane_result.lane_center_x
 
-            # ── Module 2: objects — synchronous, or async (Module 14) ──
+            # Always run the learned road detector to generate the drivable mask
+            # (needed by the anomaly detector), even if classical paint was found.
+            lrd_result = None
+            if learned_road_detector is not None:
+                draw_lrd = (lane_result is None or lane_result.confidence == 0.0)
+                lrd_result, lrd_annotated = learned_road_detector.process(frame, draw_on=annotated if draw_lrd else None)
+                if draw_lrd and lrd_result.confidence > 0.0:
+                    lane_result = lrd_result
+                    annotated = lrd_annotated
+
+            if lane_result is not None and lane_result.confidence == 0.0 and road_detector is not None:
+                road_result, annotated = road_detector.process(frame, draw_on=annotated)
+                if road_result.confidence > 0.0:
+                    lane_result = road_result
+
+            lane_center_x = lane_result.lane_center_x if lane_result is not None else (w // 2)
+
+            detection_age = 0.0
             if object_detector is not None:
                 obj_result, annotated = object_detector.process(annotated, lane_center_x)
             elif async_detector is not None:
-                async_detector.submit(frame, lane_center_x)     # RAW clean frame -> worker
+                async_detector.submit(frame, lane_center_x)
                 obj_result, det_age, is_new = async_detector.latest()
                 detection_age = det_age or 0.0
                 if obj_result is not None:
                     annotated = async_detector.annotate(annotated, obj_result)
+
+            if obj_result is not None and learned_road_detector is not None:
+                mask = getattr(learned_road_detector, '_last_mask', None)
+                if mask is not None:
+                    from anomaly_detection import AnomalyDetector
+                    if not hasattr(learned_road_detector, 'anomaly_detector'):
+                        learned_road_detector.anomaly_detector = AnomalyDetector(w, h)
+                    import copy
+                    obj_result_safe = copy.deepcopy(obj_result)
+                    obj_result = learned_road_detector.anomaly_detector.process(mask, obj_result_safe, lane_center_x, annotated)
 
             # ── Module 4: track objects across frames (stable IDs) ────
             if tracker is not None:
@@ -294,7 +331,7 @@ def run(
                 if async_detector is not None:
                     dets = obj_result.detections if (obj_result is not None and is_new) else []
                 else:
-                    dets = obj_result.detections
+                    dets = obj_result.detections if obj_result is not None else []
                 tracks = tracker.update(dets)
                 annotated = tracker.annotate(annotated, tracks)
 
@@ -317,36 +354,61 @@ def run(
                 logger.debug(f"scene understanding skipped: {exc}")
 
             # ── Module 3: fuse into one decision, then draw its HUD ────
-            decision = engine.process(lane_result, tracks, detection_age_s=detection_age)
+            # DMS runs first so dms_result can optionally influence the engine
+            # (cfg.DMS_AFFECT_DECISION). The driver chip is drawn after the HUD.
+            dms_result = None
+            try:
+                if driver_monitor is not None and driver_cap is not None:
+                    ok_d, dframe = driver_cap.read()
+                    if not ok_d:
+                        # Loop the driver video file (same behaviour as road video)
+                        driver_cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        driver_monitor.reset()
+                        ok_d, dframe = driver_cap.read()
+                    if ok_d:
+                        dms_result, _ = driver_monitor.process(dframe)
+            except Exception as exc:
+                logger.debug(f"DMS read skipped: {exc}")
+
+            decision = engine.process(lane_result, tracks,
+                                      detection_age_s=detection_age,
+                                      dms_result=dms_result)
             annotated = engine.draw_hud(annotated, decision)
+
+            # Draw DMS chip on top of the HUD (after so it is always visible)
+            if dms_result is not None and driver_monitor is not None:
+                try:
+                    annotated = driver_monitor.draw_chip(annotated, dms_result)
+                except Exception as exc:
+                    logger.debug(f"DMS chip draw skipped: {exc}")
 
             # ── Modules 5-9: advisory SIMULATION overlays ─────────────
             # Bird's-eye perception -> sim fusion -> prediction/planning ->
-            # sim control, + driver monitoring. Nothing here controls a car.
+            # sim control. Nothing here controls a car.
             try:
+                ego_objs = bev_projector.project(tracks or []) if bev_projector is not None else []
+                plan = None
+                
+                if fusion is not None:
+                    fusion.process(ego_objs)
+                    
+                if planner is not None:
+                    ego_spd = controller.sim_speed if controller is not None else None
+                    plan = planner.process(ego_objs, lane_result, ego_spd,
+                                           speed_limit_mps=speed_limit_mps,
+                                           red_light=red_light)
+                    annotated = planner.draw_overlay(annotated, plan)
+                    
+                if controller is not None:
+                    cmd = controller.process(plan, lane_result)
+                    annotated = controller.draw(annotated, cmd)
+                    
                 if bev_projector is not None:
-                    ego_objs = bev_projector.project(tracks or [])
-                    plan = None
-                    if fusion is not None:
-                        fusion.process(ego_objs)
-                    if planner is not None:
-                        ego_spd = controller.sim_speed if controller is not None else None
-                        plan = planner.process(ego_objs, lane_result, ego_spd,
-                                               speed_limit_mps=speed_limit_mps,
-                                               red_light=red_light)
-                        annotated = planner.draw_overlay(annotated, plan)
-                    if controller is not None:
-                        cmd = controller.process(plan, lane_result)
-                        annotated = controller.draw(annotated, cmd)
                     annotated = bev_projector.draw_panel(
                         annotated, ego_objs, plan.predictions if plan is not None else None)
-                    if fusion is not None:
-                        annotated = fusion.draw_label(annotated)
-                if driver_monitor is not None and driver_cap is not None:
-                    ok_d, dframe = driver_cap.read()
-                    if ok_d:
-                        dres, _ = driver_monitor.process(dframe)
-                        annotated = driver_monitor.draw_chip(annotated, dres)
+                        
+                if fusion is not None:
+                    annotated = fusion.draw_label(annotated)
             except Exception as exc:
                 logger.debug(f"advisory-sim overlay skipped: {exc}")
 
@@ -379,7 +441,8 @@ def run(
                                      if traffic_light_reader is not None else None),
                         speed_limit_kmh=(round(speed_limit_mps * 3.6)
                                          if speed_limit_mps else None),
-                        plan=plan, control=cmd)
+                        plan=plan, control=cmd,
+                        dms_state=(dms_result.state if dms_result is not None else None))
                 except Exception as exc:
                     logger.debug(f"drive log skipped: {exc}")
 
@@ -412,7 +475,7 @@ def run(
         elif key == ord("p"):
             paused = not paused
             logger.info("Paused." if paused else "Resumed.")
-        elif key == ord("s"):
+        elif key == ord("s") and annotated is not None:
             fname = f"screenshot_{screenshot_idx:04d}.jpg"
             cv2.imwrite(fname, annotated)
             logger.info(f"Screenshot saved: {fname}")
@@ -464,13 +527,20 @@ Examples
     p.add_argument("--no-lanes",   action="store_true", help="Disable lane detection.")
     p.add_argument("--no-objects", action="store_true", help="Disable object detection.")
     p.add_argument("--driver-cam", type=int, default=None, metavar="INDEX",
-                   help="Driver-facing camera index for attention monitoring (Module 9).")
+                   help="Driver-facing camera index for attention monitoring (Module 9v2).")
+    p.add_argument("--driver-video", type=str, default=None, metavar="PATH",
+                   help="Driver-facing video file for DMS testing (alternative to --driver-cam).")
     p.add_argument("--log", type=str, default=None, metavar="PATH",
                    help="Record a black-box drive log (.jsonl) — replay it with replay_log.py.")
     p.add_argument("--async", dest="async_det", action="store_true",
                    help="Run object detection on a background thread (Module 14) — YOLO on the "
                         "iGPU in parallel with the CPU-side stages. Helps most when the road "
                         "model is idle (marked roads); see README on the dual-net iGPU limit.")
+
+    p.add_argument("--simulate-domain", action="store_true",
+                   help="Apply Pro-RandConv (CVPR 2023) to simulate extreme domains (weather/texture).")
+    p.add_argument("--ecotta-adapt", action="store_true",
+                   help="Enable EcoTTA (CVPR 2023) continuous test-time adaptation for road detection.")
 
     return p.parse_args()
 
@@ -479,6 +549,9 @@ if __name__ == "__main__":
     args = _parse_args()
     if args.async_det:
         cfg.ENABLE_ASYNC_DETECTION = True
+    if args.ecotta_adapt:
+        cfg.ECOTTA_ADAPT = True
+        
     source = args.camera_index if args.camera else args.video
     run(
         source=source,
@@ -487,5 +560,7 @@ if __name__ == "__main__":
         enable_lanes=not args.no_lanes,
         enable_objects=not args.no_objects,
         driver_cam=args.driver_cam,
+        driver_video=args.driver_video,
         log_path=args.log,
+        simulate_domain=args.simulate_domain,
     )

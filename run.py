@@ -67,7 +67,58 @@ if __name__ == "__main__":
         runpy.run_path(str(ROOT / "evaluation" / "safety_audit.py"),
                        run_name="__main__")
 
+    elif subcmd == "lidar":
+        import runpy
+        runpy.run_path(str(ROOT / "simulation" / "lidar_camera_fusion.py"),
+                       run_name="__main__")
+
+    elif subcmd in ("sim", "scenario"):
+        scen = sys.argv.pop(1) if len(sys.argv) > 1 else "multicar"
+        mapping = {
+            "village": "simulation/scenario_village_road.py",
+            "intersection": "simulation/scenario_urban_intersection.py",
+            "cattle": "simulation/scenario_cattle_crossing.py",
+            "multicar": "simulation/scenario_multicar_unmarked.py",
+            "cosim": "simulation/cosimulation.py",
+        }
+        target = mapping.get(scen, "simulation/scenario_multicar_unmarked.py")
+        import runpy
+        runpy.run_path(str(ROOT / target), run_name="__main__")
+
+    elif subcmd == "dms":
+        import runpy
+        runpy.run_path(str(ROOT / "perception" / "driver_monitor_demo.py"),
+                       run_name="__main__")
+
+    elif subcmd in ("eval", "evaluate"):
+        import runpy
+        runpy.run_path(str(ROOT / "evaluation" / "evaluate.py"), run_name="__main__")
+        
+    elif subcmd == "bench":
+        import runpy
+        # Default to bench_speed.py unless --openvino is passed
+        script = "bench_openvino.py" if "--openvino" in sys.argv else "bench_speed.py"
+        runpy.run_path(str(ROOT / "evaluation" / script), run_name="__main__")
+
+    elif subcmd == "test_adas":
+        import runpy
+        runpy.run_path(str(ROOT / "evaluation" / "test_adas.py"), run_name="__main__")
+
+    elif subcmd == "train":
+        import runpy
+        script = "train_bdd.py" if "--bdd" in sys.argv else "train_local.py"
+        runpy.run_path(str(ROOT / "training" / script), run_name="__main__")
+
+    elif subcmd == "run":
+        # Universal fallback for any script
+        if not sys.argv[1:]:
+            print("Usage: python run.py run path/to/script.py")
+            sys.exit(1)
+        target = sys.argv.pop(1)
+        import runpy
+        runpy.run_path(str(ROOT / target), run_name="__main__")
+
     else:
         print(f"Unknown subcommand: {subcmd!r}")
-        print("Valid subcommands: main | bridge | demo | test | audit")
+        print("Valid subcommands: main | bridge | demo | dms | eval | bench | train | test | audit | lidar | sim | run")
         sys.exit(1)
