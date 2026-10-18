@@ -109,6 +109,10 @@ if __name__ == "__main__":
         script = "train_bdd.py" if "--bdd" in sys.argv else "train_local.py"
         runpy.run_path(str(ROOT / "training" / script), run_name="__main__")
 
+    elif subcmd == "xodr":
+        import runpy
+        runpy.run_path(str(ROOT / "run_xodr.py"), run_name="__main__")
+
     elif subcmd == "run":
         # Universal fallback for any script
         if not sys.argv[1:]:
@@ -120,5 +124,5 @@ if __name__ == "__main__":
 
     else:
         print(f"Unknown subcommand: {subcmd!r}")
-        print("Valid subcommands: main | bridge | demo | dms | eval | bench | train | test | audit | lidar | sim | run")
+        print("Valid subcommands: main | bridge | demo | dms | eval | bench | train | test | audit | lidar | sim | xodr | run")
         sys.exit(1)

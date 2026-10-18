@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<OpenDRIVE>
+  <header revMajor="1" revMinor="4" name="Scenario_scen-nlp-1792250798" version="1.0" date="2026-10-17T15:27:24" north="5.5000" south="-5.5000" east="205.0000" west="-5.0000" vendor="TwinX_ADAS_Vision">
+    <geoReference>+proj=tmerc +lat_0=0.000000 +lon_0=0.000000 +k=1 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs</geoReference>
+  </header>
+  <road name="&quot;A Car Cruising At 45 Km/H On A Broken Tarmac" length="200.0000" id="1" junction="-1">
+    <type s="0.0" type="rural">
+      <speed max="45" unit="km/h"/>
+    </type>
+    <planView>
+      <geometry s="0.0000" x="0.0000" y="0.0000" hdg="0.000000" length="200.0000">
+        <line/>
+      </geometry>
+    </planView>
+    <elevationProfile>
+      <elevation s="0.0" a="0.0" b="0.0" c="0.0" d="0.0"/>
+    </elevationProfile>
+    <lateralProfile>
+      <superelevation s="0.0" a="0.0" b="0.0" c="0.0" d="0.0"/>
+    </lateralProfile>
+    <lanes>
+      <laneSection s="0.0000">
+        <left>
+          <lane id="1" type="driving" level="false">
+            <width sOffset="0.0" a="3.50" b="0.0" c="0.0" d="0.0"/>
+            <roadMark sOffset="0.0" type="solid" weight="standard" color="standard" width="0.15"/>
+          </lane>
+        </left>
+        <center>
+          <lane id="0" type="none" level="false">
+            <roadMark sOffset="0.0" type="none" weight="standard" color="standard" width="0.15"/>
+          </lane>
+        </center>
+        <right>
+          <lane id="-1" type="driving" level="false">
+            <width sOffset="0.0" a="3.50" b="0.0" c="0.0" d="0.0"/>
+            <roadMark sOffset="0.0" type="solid" weight="standard" color="standard" width="0.15"/>
+          </lane>
+          <lane id="-2" type="shoulder" level="false">
+            <width sOffset="0.0" a="1.50" b="0.0" c="0.0" d="0.0"/>
+            <roadMark sOffset="0.0" type="solid" weight="standard" color="standard" width="0.15"/>
+          </lane>
+        </right>
+      </laneSection>
+    </lanes>
+    <surface>
+      <friction s="0.0" friction="0.85"/>
+    </surface>
+    <objects>
+      <object id="auto_rickshaw_1" name="auto_rickshaw" type="obstacle" s="35.00" t="0.50" zOffset="0.00" validLength="0.00" orientation="none" length="2.80" width="1.40" height="1.80" hdg="3.141593" pitch="0.000000" roll="0.000000"/>
+      <object id="cow_2" name="cow" type="obstacle" s="60.00" t="-1.20" zOffset="0.00" validLength="0.00" orientation="none" length="2.20" width="1.50" height="1.50" hdg="0.000000" pitch="0.000000" roll="0.000000"/>
+      <object id="motorcycle_3" name="motorcycle" type="motorbike" s="85.00" t="1.20" zOffset="0.00" validLength="0.00" orientation="none" length="2.00" width="0.80" height="1.30" hdg="0.000000" pitch="0.000000" roll="0.000000"/>
+      <object id="barricade_4" name="barricade" type="barrier" s="110.00" t="-1.20" zOffset="0.00" validLength="0.00" orientation="none" length="2.00" width="0.50" height="1.00" hdg="0.000000" pitch="0.000000" roll="0.000000"/>
+    </objects>
+    <signals/>
+  </road>
+</OpenDRIVE>
