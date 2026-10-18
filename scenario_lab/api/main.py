@@ -378,6 +378,17 @@ async def health_check():
 
 
 # ---------------------------------------------------------------------------
+# Interactive 3D WebGL TwinX Simulation Route
+# ---------------------------------------------------------------------------
+STATIC_3D_PATH = os.path.join(BASE_DIR, "static_3d", "index.html")
+@app.get("/3d")
+async def serve_3d_simulation():
+    if os.path.exists(STATIC_3D_PATH):
+        from fastapi.responses import FileResponse
+        return FileResponse(STATIC_3D_PATH)
+    raise HTTPException(status_code=404, detail="3D Visualizer template not found")
+
+# ---------------------------------------------------------------------------
 # Static Frontend Single Page Application (SPA) Serving for Web Deployment
 # ---------------------------------------------------------------------------
 FRONTEND_DIST = os.path.join(BASE_DIR, "frontend", "dist")

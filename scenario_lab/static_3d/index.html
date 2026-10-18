@@ -1,0 +1,743 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ADAS Vision — 3D TwinX Simulation Engine</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body, html { width: 100%; height: 100%; overflow: hidden; background: #080c14; font-family: 'Segoe UI', -apple-system, sans-serif; color: #f1f5f9; }
+    #canvas-container { width: 100%; height: 100%; position: absolute; top: 0; left: 0; z-index: 1; }
+
+    /* Top HUD Header */
+    .hud-header {
+      position: absolute; top: 16px; left: 20px; right: 20px;
+      display: flex; justify-content: space-between; align-items: center;
+      z-index: 10; pointer-events: none;
+    }
+    .brand-pill {
+      background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(12px);
+      border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 12px;
+      padding: 10px 18px; display: flex; align-items: center; gap: 12px; pointer-events: auto;
+    }
+    .brand-title { font-size: 15px; font-weight: 700; letter-spacing: 0.5px; color: #38bdf8; }
+    .brand-badge {
+      font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;
+      padding: 3px 8px; border-radius: 6px; background: rgba(56, 189, 248, 0.15); color: #7dd3fc; border: 1px solid rgba(56, 189, 248, 0.3);
+    }
+    .hud-controls-top { display: flex; gap: 10px; pointer-events: auto; }
+    .btn-top {
+      background: rgba(15, 23, 42, 0.85); border: 1px solid rgba(148, 163, 184, 0.25);
+      color: #cbd5e1; border-radius: 10px; padding: 8px 14px; font-size: 13px; font-weight: 600;
+      cursor: pointer; transition: all 0.2s; display: flex; align-items: center; gap: 6px; backdrop-filter: blur(8px);
+    }
+    .btn-top:hover { background: rgba(30, 41, 59, 0.9); border-color: #38bdf8; color: #fff; transform: translateY(-1px); }
+    .btn-top.active { background: #0284c7; border-color: #38bdf8; color: #fff; }
+
+    /* Telemetry HUD Panel (Top-Right) */
+    .telemetry-card {
+      position: absolute; top: 76px; right: 20px; width: 280px;
+      background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(16px);
+      border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 14px; padding: 16px;
+      z-index: 10; pointer-events: auto; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+    }
+    .telemetry-title { font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; color: #94a3b8; margin-bottom: 12px; font-weight: 700; }
+    .hud-metric-row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+    .hud-metric-label { font-size: 12px; color: #94a3b8; }
+    .hud-metric-val { font-size: 16px; font-weight: 700; font-family: 'JetBrains Mono', monospace; color: #f8fafc; }
+    .hud-metric-unit { font-size: 11px; color: #64748b; margin-left: 2px; }
+
+    /* Decision Status Banner */
+    .decision-banner {
+      margin-top: 10px; padding: 10px 14px; border-radius: 8px; text-align: center;
+      font-size: 13px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase;
+      transition: all 0.2s;
+    }
+    .decision-PROCEED { background: rgba(34, 197, 94, 0.2); border: 1px solid #22c55e; color: #4ade80; }
+    .decision-CAUTION { background: rgba(234, 179, 8, 0.2); border: 1px solid #eab308; color: #facc15; }
+    .decision-SLOW { background: rgba(14, 165, 233, 0.2); border: 1px solid #0ea5e9; color: #38bdf8; }
+    .decision-BRAKE { background: rgba(249, 115, 22, 0.25); border: 1px solid #f97316; color: #fb923c; }
+    .decision-EMERGENCY_STOP { background: rgba(239, 68, 68, 0.3); border: 1px solid #ef4444; color: #f87171; animation: pulse-alert 0.8s infinite; }
+    @keyframes pulse-alert { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.85; transform: scale(1.02); } }
+
+    /* Bottom Playback Control Bar */
+    .playback-bar {
+      position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+      width: min(850px, calc(100% - 40px));
+      background: rgba(15, 23, 42, 0.9); backdrop-filter: blur(16px);
+      border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 16px;
+      padding: 14px 22px; z-index: 10; display: flex; flex-direction: column; gap: 10px;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6);
+    }
+    .timeline-container { display: flex; align-items: center; gap: 12px; width: 100%; }
+    .time-readout { font-size: 12px; font-family: 'JetBrains Mono', monospace; font-weight: 600; color: #94a3b8; min-width: 50px; }
+    .scrub-slider {
+      flex: 1; -webkit-appearance: none; appearance: none; height: 6px; border-radius: 3px;
+      background: #334155; outline: none; cursor: pointer; transition: background 0.2s;
+    }
+    .scrub-slider::-webkit-slider-thumb {
+      -webkit-appearance: none; appearance: none; width: 16px; height: 16px; border-radius: 50%;
+      background: #38bdf8; cursor: pointer; border: 2px solid #0f172a; box-shadow: 0 0 10px rgba(56, 189, 248, 0.7);
+    }
+    .controls-row { display: flex; justify-content: space-between; align-items: center; }
+    .playback-buttons { display: flex; align-items: center; gap: 8px; }
+    .btn-ctrl {
+      background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(148, 163, 184, 0.2);
+      color: #e2e8f0; border-radius: 8px; padding: 6px 14px; font-size: 13px; font-weight: 600;
+      cursor: pointer; transition: all 0.15s;
+    }
+    .btn-ctrl:hover { background: #334155; color: #fff; }
+    .btn-ctrl.btn-primary { background: #0284c7; border-color: #38bdf8; color: #fff; }
+    .camera-switcher { display: flex; gap: 6px; }
+    .scenario-select {
+      background: rgba(30, 41, 59, 0.9); border: 1px solid rgba(148, 163, 184, 0.3);
+      color: #e2e8f0; border-radius: 8px; padding: 6px 10px; font-size: 12px; font-weight: 600; outline: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="canvas-container"></div>
+
+  <!-- Header -->
+  <div class="hud-header">
+    <div class="brand-pill">
+      <span class="brand-title">ADAS Vision</span>
+      <span class="brand-badge">3D TwinX Real-Time Engine</span>
+    </div>
+    <div class="hud-controls-top">
+      <select id="scenario-selector" class="scenario-select" onchange="loadSelectedScenario(this.value)">
+        <option value="scen-nlp-1792250798">scen-nlp-1792250798 (OpenDRIVE Broken Tarmac)</option>
+        <option value="template_cattle_crossing">Sudden Cattle Crossing</option>
+      </select>
+      <button class="btn-top active" id="btn-mode-adaptive" onclick="setMode('adaptive')">Adaptive ADAS</button>
+      <button class="btn-top" id="btn-mode-baseline" onclick="setMode('baseline')">Baseline Western ADAS</button>
+      <a href="/" class="btn-top">Back to 2D Lab</a>
+    </div>
+  </div>
+
+  <!-- Telemetry HUD -->
+  <div class="telemetry-card">
+    <div class="telemetry-title">Vehicle Telemetry HUD</div>
+    <div class="hud-metric-row">
+      <span class="hud-metric-label">Cruise Speed</span>
+      <div><span class="hud-metric-val" id="hud-speed">0.0</span><span class="hud-metric-unit">km/h</span></div>
+    </div>
+    <div class="hud-metric-row">
+      <span class="hud-metric-label">Longitudinal Position</span>
+      <div><span class="hud-metric-val" id="hud-pos-x">0.0</span><span class="hud-metric-unit">m</span></div>
+    </div>
+    <div class="hud-metric-row">
+      <span class="hud-metric-label">Lateral Displacement</span>
+      <div><span class="hud-metric-val" id="hud-pos-y">0.0</span><span class="hud-metric-unit">m</span></div>
+    </div>
+    <div class="hud-metric-row">
+      <span class="hud-metric-label">Min Hazard Clearance</span>
+      <div><span class="hud-metric-val" id="hud-clearance">--</span><span class="hud-metric-unit">m</span></div>
+    </div>
+    <div class="hud-metric-row">
+      <span class="hud-metric-label">Dynamic Replans</span>
+      <div><span class="hud-metric-val" id="hud-replans">0</span></div>
+    </div>
+    <div class="decision-banner decision-PROCEED" id="hud-decision">PROCEED</div>
+  </div>
+
+  <!-- Bottom Playback Controls -->
+  <div class="playback-bar">
+    <div class="timeline-container">
+      <span class="time-readout" id="time-current">0.0 s</span>
+      <input type="range" min="0" max="100" value="0" class="scrub-slider" id="timeline-slider" oninput="onScrub(this.value)" />
+      <span class="time-readout" id="time-total">21.4 s</span>
+    </div>
+    <div class="controls-row">
+      <div class="playback-buttons">
+        <button class="btn-ctrl btn-primary" id="btn-play-pause" onclick="togglePlayPause()">Pause</button>
+        <button class="btn-ctrl" onclick="restartSimulation()">Restart</button>
+        <button class="btn-ctrl" onclick="cycleSpeed()">Speed: <span id="speed-label">1x</span></button>
+      </div>
+      <div class="camera-switcher">
+        <button class="btn-ctrl active" id="cam-chase" onclick="setCameraMode('chase')">Chase 3D</button>
+        <button class="btn-ctrl" id="cam-cockpit" onclick="setCameraMode('cockpit')">Cockpit POV</button>
+        <button class="btn-ctrl" id="cam-orbit" onclick="setCameraMode('orbit')">Free Orbit</button>
+        <button class="btn-ctrl" id="cam-top" onclick="setCameraMode('top')">Top Down</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // -------------------------------------------------------------------------
+    // 1. Simulation Data & Kinematic Model Setup
+    // -------------------------------------------------------------------------
+    let currentScenarioId = "scen-nlp-1792250798";
+    let currentMode = "adaptive";
+    let isPlaying = true;
+    let currentStep = 0;
+    let playbackSpeed = 1.0;
+    let cameraMode = "chase"; // 'chase', 'cockpit', 'orbit', 'top'
+
+    // Scenario Data Cache
+    let scenarioData = null;
+    let simResult = null;
+    let trajData = [];
+    let actorStates = [];
+    let totalSteps = 0;
+    const DT = 0.033;
+
+    // -------------------------------------------------------------------------
+    // 2. Three.js Scene, Lighting & Rendering Engine
+    // -------------------------------------------------------------------------
+    const container = document.getElementById('canvas-container');
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0a0f1d);
+    scene.fog = new THREE.FogExp2(0x0a0f1d, 0.008);
+
+    const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    container.appendChild(renderer.domElement);
+
+    const controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+    controls.maxPolarAngle = Math.PI / 2 - 0.02; // Don't go below ground
+
+    // Lighting
+    const ambientLight = new THREE.HemisphereLight(0xddeeff, 0x112233, 0.7);
+    scene.add(ambientLight);
+
+    const dirLight = new THREE.DirectionalLight(0xfff5e6, 1.2);
+    dirLight.position.set(50, 100, 40);
+    dirLight.castShadow = true;
+    dirLight.shadow.mapSize.width = 2048;
+    dirLight.shadow.mapSize.height = 2048;
+    dirLight.shadow.camera.near = 10;
+    dirLight.shadow.camera.far = 300;
+    dirLight.shadow.camera.left = -100;
+    dirLight.shadow.camera.right = 100;
+    dirLight.shadow.camera.top = 100;
+    dirLight.shadow.camera.bottom = -100;
+    scene.add(dirLight);
+
+    // -------------------------------------------------------------------------
+    // 3. 3D Environment: Road, Terrain, Markings
+    // -------------------------------------------------------------------------
+    let roadMesh, groundMesh, pathLine;
+
+    function build3DEnvironment(roadLength = 220, laneWidth = 7.0) {
+      // Remove old meshes if rebuilding
+      if (roadMesh) scene.remove(roadMesh);
+      if (groundMesh) scene.remove(groundMesh);
+
+      // Huge terrain plane (grass/dirt)
+      const groundGeo = new THREE.PlaneGeometry(600, 600);
+      const groundMat = new THREE.MeshStandardMaterial({ color: 0x142018, roughness: 0.95 });
+      groundMesh = new THREE.Mesh(groundGeo, groundMat);
+      groundMesh.rotation.x = -Math.PI / 2;
+      groundMesh.position.set(roadLength / 2, -0.05, 0);
+      groundMesh.receiveShadow = true;
+      scene.add(groundMesh);
+
+      // Asphalt Roadway
+      const roadGeo = new THREE.PlaneGeometry(roadLength, laneWidth);
+      const roadMat = new THREE.MeshStandardMaterial({ color: 0x1e242c, roughness: 0.85 });
+      roadMesh = new THREE.Mesh(roadGeo, roadMat);
+      roadMesh.rotation.x = -Math.PI / 2;
+      roadMesh.position.set(roadLength / 2, 0.0, 0);
+      roadMesh.receiveShadow = true;
+      scene.add(roadMesh);
+
+      // Unpaved dirt shoulders
+      const shoulderGeo = new THREE.PlaneGeometry(roadLength, 2.5);
+      const shoulderMat = new THREE.MeshStandardMaterial({ color: 0x2e271d, roughness: 0.98 });
+      const shoulderL = new THREE.Mesh(shoulderGeo, shoulderMat);
+      shoulderL.rotation.x = -Math.PI / 2;
+      shoulderL.position.set(roadLength / 2, 0.005, (laneWidth / 2) + 1.25);
+      scene.add(shoulderL);
+      const shoulderR = new THREE.Mesh(shoulderGeo, shoulderMat);
+      shoulderR.rotation.x = -Math.PI / 2;
+      shoulderR.position.set(roadLength / 2, 0.005, -(laneWidth / 2) - 1.25);
+      scene.add(shoulderR);
+
+      // Road markings: Dashed center line
+      const dashGroup = new THREE.Group();
+      const dashGeo = new THREE.PlaneGeometry(4.0, 0.18);
+      const dashMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+      for (let x = 4; x < roadLength - 4; x += 8) {
+        const d = new THREE.Mesh(dashGeo, dashMat);
+        d.rotation.x = -Math.PI / 2;
+        d.position.set(x, 0.02, 0);
+        dashGroup.add(d);
+      }
+      scene.add(dashGroup);
+
+      // Solid edge lines
+      const edgeGeo = new THREE.PlaneGeometry(roadLength, 0.15);
+      const edgeMat = new THREE.MeshBasicMaterial({ color: 0xf8fafc });
+      const edgeTop = new THREE.Mesh(edgeGeo, edgeMat);
+      edgeTop.rotation.x = -Math.PI / 2;
+      edgeTop.position.set(roadLength / 2, 0.02, laneWidth / 2);
+      scene.add(edgeTop);
+      const edgeBot = new THREE.Mesh(edgeGeo, edgeMat);
+      edgeBot.rotation.x = -Math.PI / 2;
+      edgeBot.position.set(roadLength / 2, 0.02, -laneWidth / 2);
+      scene.add(edgeBot);
+
+      // Target Goal Banner
+      const goalArch = new THREE.Group();
+      const postMat = new THREE.MeshStandardMaterial({ color: 0xfacc15, metalness: 0.5 });
+      const postL = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 6), postMat);
+      postL.position.set(180, 3, (laneWidth / 2) + 0.5);
+      const postR = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 6), postMat);
+      postR.position.set(180, 3, -(laneWidth / 2) - 0.5);
+      const crossbar = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.6, laneWidth + 1.2), postMat);
+      crossbar.position.set(180, 5.8, 0);
+      goalArch.add(postL); goalArch.add(postR); goalArch.add(crossbar);
+      scene.add(goalArch);
+    }
+
+    // -------------------------------------------------------------------------
+    // 4. Procedural 3D Vehicle & Indian Road Actor Meshes
+    // -------------------------------------------------------------------------
+    let egoVehicleMesh;
+    let actorMeshes = new Map();
+
+    function createEgoVehicle() {
+      const egoGroup = new THREE.Group();
+
+      // Sleek Modern Sedan Body
+      const bodyMat = new THREE.MeshStandardMaterial({ color: 0x0284c7, metalness: 0.8, roughness: 0.2 });
+      const bodyGeo = new THREE.BoxGeometry(4.2, 0.9, 1.85);
+      const body = new THREE.Mesh(bodyGeo, bodyMat);
+      body.position.y = 0.65;
+      body.castShadow = true;
+      egoGroup.add(body);
+
+      // Cabin / Glass Greenhouse
+      const cabinMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.1, metalness: 0.9 });
+      const cabinGeo = new THREE.BoxGeometry(2.2, 0.65, 1.5);
+      const cabin = new THREE.Mesh(cabinGeo, cabinMat);
+      cabin.position.set(-0.2, 1.35, 0);
+      cabin.castShadow = true;
+      egoGroup.add(cabin);
+
+      // Headlights (Glowing white)
+      const lightMat = new THREE.MeshBasicMaterial({ color: 0xe0f2fe });
+      const lightL = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.2, 0.35), lightMat);
+      lightL.position.set(2.1, 0.75, 0.65);
+      const lightR = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.2, 0.35), lightMat);
+      lightR.position.set(2.1, 0.75, -0.65);
+      egoGroup.add(lightL); egoGroup.add(lightR);
+
+      // Tail / Brake Lights (Glowing Red)
+      const brakeMat = new THREE.MeshBasicMaterial({ color: 0xef4444 });
+      const brakeL = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.2, 0.35), brakeMat);
+      brakeL.position.set(-2.1, 0.75, 0.65);
+      const brakeR = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.2, 0.35), brakeMat);
+      brakeR.position.set(-2.1, 0.75, -0.65);
+      egoGroup.add(brakeL); egoGroup.add(brakeR);
+      egoGroup.brakeL = brakeL;
+      egoGroup.brakeR = brakeR;
+
+      // Wheels
+      const wheelMat = new THREE.MeshStandardMaterial({ color: 0x111827, roughness: 0.9 });
+      const wheelGeo = new THREE.CylinderGeometry(0.38, 0.38, 0.26, 16);
+      const wFL = new THREE.Mesh(wheelGeo, wheelMat);
+      wFL.rotation.x = Math.PI / 2; wFL.position.set(1.3, 0.38, 0.95);
+      const wFR = new THREE.Mesh(wheelGeo, wheelMat);
+      wFR.rotation.x = Math.PI / 2; wFR.position.set(1.3, 0.38, -0.95);
+      const wRL = new THREE.Mesh(wheelGeo, wheelMat);
+      wRL.rotation.x = Math.PI / 2; wRL.position.set(-1.3, 0.38, 0.95);
+      const wRR = new THREE.Mesh(wheelGeo, wheelMat);
+      wRR.rotation.x = Math.PI / 2; wRR.position.set(-1.3, 0.38, -0.95);
+      egoGroup.add(wFL); egoGroup.add(wFR); egoGroup.add(wRL); egoGroup.add(wRR);
+
+      scene.add(egoGroup);
+      return egoGroup;
+    }
+
+    function createActor3DMesh(actor) {
+      const g = new THREE.Group();
+      const cls = actor.class || actor.actor_class || 'car';
+
+      if (cls === 'auto_rickshaw' || cls === 'rickshaw') {
+        // Classic Indian Auto Rickshaw (Yellow Roof + Green/Black body)
+        const cab = new THREE.Mesh(new THREE.BoxGeometry(2.6, 1.4, 1.3), new THREE.MeshStandardMaterial({ color: 0x166534, roughness: 0.4 }));
+        cab.position.y = 0.8; cab.castShadow = true;
+        const roof = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.35, 1.35), new THREE.MeshStandardMaterial({ color: 0xeab308, roughness: 0.3 }));
+        roof.position.y = 1.6; roof.castShadow = true;
+        g.add(cab); g.add(roof);
+      } else if (cls === 'cow' || cls === 'cattle' || cls === 'buffalo') {
+        // Bovine / Cow
+        const cowMat = new THREE.MeshStandardMaterial({ color: 0xd97706, roughness: 0.9 });
+        const torso = new THREE.Mesh(new THREE.BoxGeometry(2.0, 1.1, 0.8), cowMat);
+        torso.position.y = 1.0; torso.castShadow = true;
+        const head = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.6, 0.6), cowMat);
+        head.position.set(1.1, 1.3, 0); head.castShadow = true;
+        g.add(torso); g.add(head);
+      } else if (cls === 'motorcycle' || cls === 'bike') {
+        // Two-Wheeler
+        const bikeMat = new THREE.MeshStandardMaterial({ color: 0x0284c7, roughness: 0.5 });
+        const frame = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.8, 0.4), bikeMat);
+        frame.position.y = 0.6; frame.castShadow = true;
+        const rider = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.3, 1.1), new THREE.MeshStandardMaterial({ color: 0x475569 }));
+        rider.position.set(-0.1, 1.3, 0); rider.castShadow = true;
+        g.add(frame); g.add(rider);
+      } else if (cls === 'barricade' || cls === 'barrier') {
+        // Police Barrier (Yellow & Black stripes)
+        const barMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.5 });
+        const bar = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.9, 0.4), barMat);
+        bar.position.y = 0.55; bar.castShadow = true;
+        g.add(bar);
+      } else {
+        // Generic Obstacle
+        const defMat = new THREE.MeshStandardMaterial({ color: 0x64748b });
+        const box = new THREE.Mesh(new THREE.BoxGeometry(actor.length_m || 2.0, 1.0, actor.width_m || 1.2), defMat);
+        box.position.y = 0.6; box.castShadow = true;
+        g.add(box);
+      }
+
+      scene.add(g);
+      return g;
+    }
+
+    // -------------------------------------------------------------------------
+    // 5. Lookahead Planned Trajectory Ribbon
+    // -------------------------------------------------------------------------
+    let trajectoryRibbon;
+    function updateTrajectoryRibbon(ptsX, ptsY) {
+      if (trajectoryRibbon) scene.remove(trajectoryRibbon);
+      if (!ptsX || ptsX.length < 2) return;
+
+      const points = [];
+      for (let i = 0; i < ptsX.length; i++) {
+        // In 3D: X is longitudinal along road, Z is lateral (-Y in 2D)
+        points.push(new THREE.Vector3(ptsX[i], 0.08, -ptsY[i]));
+      }
+      const curve = new THREE.CatmullRomCurve3(points);
+      const tubeGeo = new THREE.TubeGeometry(curve, 64, 0.16, 8, false);
+      const tubeMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.85 });
+      trajectoryRibbon = new THREE.Mesh(tubeGeo, tubeMat);
+      scene.add(trajectoryRibbon);
+    }
+
+    // -------------------------------------------------------------------------
+    // 6. Scenario Loader & Kinematic Simulation Engine
+    // -------------------------------------------------------------------------
+    async function loadSelectedScenario(scenId) {
+      currentScenarioId = scenId;
+      try {
+        const resp = await fetch(`/api/v1/scenarios/${scenId}`);
+        if (!resp.ok) throw new Error("Scenario not found in DB");
+        scenarioData = await resp.json();
+      } catch (err) {
+        console.warn("Falling back to local OpenDRIVE hazard layout:", err);
+        scenarioData = {
+          scenario_id: "scen-nlp-1792250798",
+          road: { length_m: 200, lane_half_width_m: 3.5 },
+          ego_vehicle: { initial_speed_kmh: 45, goal_x_m: 180 },
+          actors: [
+            { id: "auto_rickshaw_1", class: "auto_rickshaw", initial_x_m: 35.0, initial_y_m: 0.5, initial_vx_mps: -6.0, initial_vy_mps: -1.2, behaviour: "cut_in", behaviour_trigger_s: 1.2 },
+            { id: "cow_2", class: "cow", initial_x_m: 60.0, initial_y_m: -1.2, initial_vx_mps: 0.2, initial_vy_mps: 0.9, behaviour: "crossing", behaviour_trigger_s: 1.0, behaviour_y_target_m: 2.0 },
+            { id: "motorcycle_3", class: "motorcycle", initial_x_m: 85.0, initial_y_m: 1.2, initial_vx_mps: 5.62, initial_vy_mps: 0.0, behaviour: "constant_velocity" },
+            { id: "barricade_4", class: "barricade", initial_x_m: 110.0, initial_y_m: -1.2, initial_vx_mps: 0.0, initial_vy_mps: 0.0, behaviour: "static" }
+          ]
+        };
+      }
+
+      // Rebuild 3D environment for road length & width
+      const rLen = scenarioData.road.length_m || 200;
+      const rW = (scenarioData.road.lane_half_width_m || 3.5) * 2;
+      build3DEnvironment(rLen, rW);
+
+      // Re-create Actor Meshes
+      actorMeshes.forEach(mesh => scene.remove(mesh));
+      actorMeshes.clear();
+      scenarioData.actors.forEach(a => {
+        actorMeshes.set(a.id, createActor3DMesh(a));
+      });
+
+      // Run Client Kinematics
+      runKinematicsClient(currentMode);
+    }
+
+    function runKinematicsClient(mode) {
+      // Re-simulate step by step matching python matlab_runner.py
+      const isAdaptive = (mode === 'adaptive');
+      const egoInitV = (scenarioData.ego_vehicle.initial_speed_kmh || 45) / 3.6;
+      const goalX = scenarioData.ego_vehicle.goal_x_m || 180;
+      let egoX = 0, egoY = 0, egoV = egoInitV;
+      let maxTimeS = 35.0;
+      totalSteps = Math.floor(maxTimeS / DT);
+
+      trajData = [];
+      actorStates = [];
+
+      // Deep copy actors
+      let liveActors = scenarioData.actors.map(a => ({
+        id: a.id,
+        cls: a.class || a.actor_class,
+        x: a.initial_x_m,
+        y: a.initial_y_m,
+        vx: a.initial_vx_mps || 0,
+        vy: a.initial_vy_mps || 0,
+        beh: a.behaviour || 'constant_velocity',
+        trig: a.behaviour_trigger_s || 0,
+        yTgt: a.behaviour_y_target_m || 0,
+        w: a.width_m || 1.4,
+        l: a.length_m || 2.2
+      }));
+
+      let minClearanceGlobal = 999;
+      let replansCount = 0;
+
+      for (let step = 0; step < totalSteps; step++) {
+        let t = step * DT;
+
+        // 1. Update Dynamic Actors
+        liveActors.forEach(a => {
+          if (a.beh === 'constant_velocity') {
+            a.x += a.vx * DT;
+            a.y += a.vy * DT;
+          } else if (a.beh === 'cut_in') {
+            a.x += a.vx * DT;
+            if (t >= a.trig && Math.abs(a.y) > 0.3) {
+              a.y += a.vy * DT;
+            }
+          } else if (a.beh === 'crossing') {
+            if (t >= a.trig && a.y < (a.yTgt || 2.5)) {
+              a.x += a.vx * DT;
+              a.y += a.vy * DT;
+            }
+          }
+        });
+
+        // 2. Obstacle Clearance & ADAS Decision Logic
+        let nearestDist = 999;
+        let activeObs = null;
+        liveActors.forEach(a => {
+          let dx = a.x - egoX;
+          let dy = a.y - egoY;
+          let d = Math.sqrt(dx*dx + dy*dy);
+          if (d < nearestDist && dx > -1.0) {
+            nearestDist = d;
+            activeObs = a;
+          }
+        });
+        if (nearestDist < minClearanceGlobal) minClearanceGlobal = nearestDist;
+
+        let decision = 'PROCEED';
+        let accel = 0.0;
+
+        if (isAdaptive) {
+          // Proactive Lateral Evasion
+          if (activeObs && (activeObs.x - egoX > -1.0) && (activeObs.x - egoX < 32.0)) {
+            let targetY = activeObs.y > 0 ? (activeObs.y - 2.2) : (activeObs.y + 2.2);
+            targetY = Math.max(-2.8, Math.min(2.8, targetY));
+            let dySteer = targetY - egoY;
+            egoY += Math.sign(dySteer) * Math.min(Math.abs(dySteer), 2.2 * DT);
+            replansCount = Math.min(replansCount + 1, 3);
+          } else if (Math.abs(egoY) > 0.05) {
+            egoY -= Math.sign(egoY) * Math.min(Math.abs(egoY), 1.2 * DT);
+          }
+
+          if (nearestDist < 4.0) {
+            decision = 'EMERGENCY_STOP'; accel = -5.8;
+          } else if (nearestDist < 8.0) {
+            decision = 'BRAKE'; accel = -3.5;
+          } else if (nearestDist < 14.0) {
+            decision = 'SLOW'; accel = -1.5;
+          } else if (nearestDist < 25.0) {
+            decision = 'CAUTION'; accel = -0.5;
+          } else {
+            decision = 'PROCEED'; accel = egoV < egoInitV ? 1.8 : 0.0;
+          }
+        } else {
+          // Baseline Locked in Center
+          egoY = 0;
+          if (nearestDist < 5.0) {
+            decision = 'EMERGENCY_STOP'; accel = -6.0;
+          } else if (nearestDist < 10.0) {
+            decision = 'BRAKE'; accel = -3.5;
+          } else {
+            decision = 'PROCEED'; accel = egoV < egoInitV ? 1.8 : 0.0;
+          }
+        }
+
+        egoV = Math.max(0, egoV + accel * DT);
+        egoX += egoV * DT;
+
+        trajData.push({
+          step, t: Number(t.toFixed(2)),
+          x: egoX, y: egoY, speedKmh: egoV * 3.6,
+          decision, clearance: Math.min(nearestDist, 25.0),
+          replans: isAdaptive ? replansCount : 0
+        });
+
+        // Store snapshot of actors
+        actorStates.push(liveActors.map(a => ({ id: a.id, x: a.x, y: a.y })));
+
+        if (egoX >= goalX) break;
+      }
+
+      totalSteps = trajData.length;
+      document.getElementById('time-total').innerText = `${trajData[totalSteps - 1].t} s`;
+      currentStep = 0;
+
+      // Update Planned Path Ribbon
+      const ptsX = trajData.map(d => d.x);
+      const ptsY = trajData.map(d => d.y);
+      updateTrajectoryRibbon(ptsX, ptsY);
+    }
+
+    // -------------------------------------------------------------------------
+    // 7. Dynamic 3D Camera Modes & Render Loop
+    // -------------------------------------------------------------------------
+    function setCameraMode(mode) {
+      cameraMode = mode;
+      document.querySelectorAll('.camera-switcher .btn-ctrl').forEach(b => b.classList.remove('active'));
+      const activeBtn = document.getElementById(`cam-${mode}`);
+      if (activeBtn) activeBtn.classList.add('active');
+    }
+
+    function setMode(mode) {
+      currentMode = mode;
+      document.getElementById('btn-mode-adaptive').classList.toggle('active', mode === 'adaptive');
+      document.getElementById('btn-mode-baseline').classList.toggle('active', mode === 'baseline');
+      runKinematicsClient(mode);
+    }
+
+    function togglePlayPause() {
+      isPlaying = !isPlaying;
+      document.getElementById('btn-play-pause').innerText = isPlaying ? "Pause" : "Play";
+    }
+
+    function restartSimulation() {
+      currentStep = 0;
+      isPlaying = true;
+      document.getElementById('btn-play-pause').innerText = "Pause";
+    }
+
+    function cycleSpeed() {
+      const speeds = [0.5, 1.0, 2.0, 4.0];
+      let idx = speeds.indexOf(playbackSpeed);
+      playbackSpeed = speeds[(idx + 1) % speeds.length];
+      document.getElementById('speed-label').innerText = `${playbackSpeed}x`;
+    }
+
+    function onScrub(val) {
+      currentStep = Math.floor((val / 100) * (totalSteps - 1));
+      updateFrame();
+    }
+
+    function updateFrame() {
+      if (!trajData || trajData.length === 0) return;
+      currentStep = Math.min(currentStep, totalSteps - 1);
+      const cur = trajData[currentStep];
+      const acts = actorStates[currentStep];
+
+      // 1. Update Ego Vehicle 3D Pose
+      if (egoVehicleMesh) {
+        // Map 2D (x, y) to 3D (X: x, Y: 0, Z: -y)
+        egoVehicleMesh.position.set(cur.x, 0, -cur.y);
+
+        // Heading angle calculation
+        let nextStep = Math.min(currentStep + 1, totalSteps - 1);
+        let dx = trajData[nextStep].x - cur.x;
+        let dy = trajData[nextStep].y - cur.y;
+        let yaw = Math.atan2(-dy, dx);
+        egoVehicleMesh.rotation.y = yaw;
+
+        // Brake lights glow during braking
+        let isBraking = cur.decision === 'BRAKE' || cur.decision === 'EMERGENCY_STOP';
+        if (egoVehicleMesh.brakeL && egoVehicleMesh.brakeR) {
+          egoVehicleMesh.brakeL.material.color.setHex(isBraking ? 0xff0000 : 0x7f1d1d);
+          egoVehicleMesh.brakeR.material.color.setHex(isBraking ? 0xff0000 : 0x7f1d1d);
+        }
+      }
+
+      // 2. Update Dynamic Actor 3D Poses
+      if (acts) {
+        acts.forEach(a => {
+          let mesh = actorMeshes.get(a.id);
+          if (mesh) {
+            mesh.position.set(a.x, 0, -a.y);
+          }
+        });
+      }
+
+      // 3. Update Camera based on Mode
+      if (cameraMode === 'chase') {
+        const offset = new THREE.Vector3(-14, 6.5, 0);
+        offset.applyAxisAngle(new THREE.Vector3(0, 1, 0), egoVehicleMesh.rotation.y);
+        camera.position.copy(egoVehicleMesh.position).add(offset);
+        controls.target.copy(egoVehicleMesh.position).add(new THREE.Vector3(8, 1.5, 0));
+      } else if (cameraMode === 'cockpit') {
+        const cockpitPos = new THREE.Vector3(0.4, 1.35, 0);
+        cockpitPos.applyAxisAngle(new THREE.Vector3(0, 1, 0), egoVehicleMesh.rotation.y);
+        camera.position.copy(egoVehicleMesh.position).add(cockpitPos);
+        const lookTgt = new THREE.Vector3(25, 1.2, 0);
+        lookTgt.applyAxisAngle(new THREE.Vector3(0, 1, 0), egoVehicleMesh.rotation.y);
+        controls.target.copy(egoVehicleMesh.position).add(lookTgt);
+      } else if (cameraMode === 'top') {
+        camera.position.set(egoVehicleMesh.position.x, 38, -egoVehicleMesh.position.z);
+        controls.target.set(egoVehicleMesh.position.x + 10, 0, -egoVehicleMesh.position.z);
+      }
+
+      // 4. Update HUD Text & Telemetry
+      document.getElementById('hud-speed').innerText = cur.speedKmh.toFixed(1);
+      document.getElementById('hud-pos-x').innerText = cur.x.toFixed(1);
+      document.getElementById('hud-pos-y').innerText = cur.y.toFixed(2);
+      document.getElementById('hud-clearance').innerText = cur.clearance < 20 ? cur.clearance.toFixed(2) : '>20';
+      document.getElementById('hud-replans').innerText = cur.replans;
+
+      const decElem = document.getElementById('hud-decision');
+      decElem.className = `decision-banner decision-${cur.decision}`;
+      decElem.innerText = cur.decision.replace('_', ' ');
+
+      document.getElementById('time-current').innerText = `${cur.t.toFixed(1)} s`;
+      document.getElementById('timeline-slider').value = Math.floor((currentStep / (totalSteps - 1)) * 100);
+    }
+
+    // Animation Tick
+    let lastTime = performance.now();
+    function animate() {
+      requestAnimationFrame(animate);
+
+      let now = performance.now();
+      let delta = (now - lastTime) / 1000;
+      lastTime = now;
+
+      if (isPlaying && totalSteps > 0) {
+        let stepIncrement = (delta / DT) * playbackSpeed;
+        currentStep += stepIncrement;
+        if (currentStep >= totalSteps - 1) {
+          currentStep = totalSteps - 1;
+          isPlaying = false;
+          document.getElementById('btn-play-pause').innerText = "Play";
+        }
+        updateFrame();
+      }
+
+      controls.update();
+      renderer.render(scene, camera);
+    }
+
+    // -------------------------------------------------------------------------
+    // 8. Initialization & Window Resize
+    // -------------------------------------------------------------------------
+    egoVehicleMesh = createEgoVehicle();
+    loadSelectedScenario("scen-nlp-1792250798");
+    animate();
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>
