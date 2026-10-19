@@ -19,7 +19,19 @@ Covered:
   - deployed road backend parity (OpenVINO vs ONNX) — guards model/quant swaps
 """
 
+import os
 import sys
+
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+for _p in [
+    _PROJECT_ROOT,
+    os.path.join(_PROJECT_ROOT, "core"),
+    os.path.join(_PROJECT_ROOT, "perception"),
+    os.path.join(_PROJECT_ROOT, "simulation"),
+]:
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -346,7 +358,7 @@ def test_decision_lateral_inhibited_toward_hazard():
     eng = _engine()
     hz = FakeTrack(id=8, label="car", in_path=True, smoothed_distance_m=7.0,
                    closing_speed_mps=0.0, ttc_s=None, risk="HIGH", center=(560, 500))  # left of centre
-    lane = FakeLane(confidence=1.0, offset_px=60)   # offset>0 -> CORRECT_LEFT, toward the hazard
+    lane = FakeLane(confidence=1.0, offset_px=-60)   # offset<0 -> CORRECT_LEFT, toward the hazard
     d = None
     for _ in range(6):
         d = eng.process(lane, [hz])
@@ -711,6 +723,61 @@ def test_async_detector_produces_and_newest_wins():
         assert r.tag == 30, f"newest-frame-wins failed (got tag {r.tag})"
     finally:
         ad.stop()
+
+
+# ---------------------------------------------------------------------------
+# TinyFish Scout alert floor (Module 15 integration)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class FakeScoutAlert:
+    hazard_type: str = "DENSE FOG"
+    severity: str = "HIGH"
+    headline: str = "Dense fog on NH48, visibility < 50m"
+    recommended_speed_kmh: int = 40
+
+
+def test_decision_scout_alert_floors_action():
+    eng = _engine()
+    # Baseline clear frames
+    for _ in range(4):
+        d = eng.process(FakeLane(1.0, 0), [])
+    assert d.longitudinal_level == 0, "expected PROCEED baseline"
+
+    # Scout alert with HIGH severity floors to SLOW (level 2)
+    alert = FakeScoutAlert(hazard_type="WATERLOGGING", severity="HIGH", recommended_speed_kmh=35)
+    d = eng.process(FakeLane(1.0, 0), [], scout_alert=alert)
+    assert d.longitudinal_level >= 2, f"scout HIGH alert did not floor to SLOW: {d.longitudinal}"
+    assert d.scout_hazard_type == "WATERLOGGING"
+    assert d.scout_recommended_speed == 35
+
+
+def test_traffic_light_controlling_state_smoothing():
+    from traffic_light_state import TrafficLightReader, RED, UNKNOWN
+    reader = TrafficLightReader()
+    reader._vote.extend([RED, RED, RED])
+    reader.controlling_state = RED
+
+    det = type("Det", (), {"label": "traffic light", "x1": 10, "y1": 10, "x2": 50, "y2": 100, "in_path": True, "distance_m": 20.0})()
+    lights = reader.read(np.zeros((720, 1280, 3), np.uint8), [det])
+    assert reader.controlling_state == RED
+    assert lights[0].state == RED, f"controlling light failed to inherit smoothed state: {lights[0].state}"
+
+
+def test_tracker_second_order_kinematics():
+    from tracker import MultiObjectTracker
+    trk = MultiObjectTracker()
+    # Feed accelerating approach (distance drops by increasing deltas < MAX_PLAUSIBLE_JUMP_M)
+    for k in range(cfg.TRACK_MIN_HITS + 3):
+        d = _det(600, 400, 700, 520)
+        d.distance_m = max(2.0, 40.0 - 0.2 * (k ** 2) - 1.0 * k)
+        tracks = trk.update([d])
+    confirmed = [t for t in tracks if t.confirmed]
+    assert confirmed, "track never confirmed"
+    track = confirmed[0]
+    assert hasattr(track, "closing_accel_mps2"), "track missing closing_accel_mps2"
+    assert track.closing_accel_mps2 > 0.0, f"closing acceleration not detected: {track.closing_accel_mps2}"
+    assert track.ttc_s is not None and track.ttc_s > 0.0, f"second-order TTC invalid: {track.ttc_s}"
 
 
 # ---------------------------------------------------------------------------

@@ -138,6 +138,8 @@ class TrafficLightReader:
         self.controlling_state = (
             max(set(self._vote), key=self._vote.count) if self._vote else None
         )
+        if controlling is not None and self.controlling_state is not None:
+            controlling.state = self.controlling_state
         return lights
 
     @staticmethod

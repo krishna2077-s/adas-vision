@@ -388,9 +388,11 @@ def run(
             except Exception as exc:
                 logger.debug(f"DMS read skipped: {exc}")
 
+            scout_alert = tinyfish_scout.alert if tinyfish_scout is not None else None
             decision = engine.process(lane_result, tracks,
                                       detection_age_s=detection_age,
-                                      dms_result=dms_result)
+                                      dms_result=dms_result,
+                                      scout_alert=scout_alert)
             annotated = engine.draw_hud(annotated, decision)
 
             # Draw DMS chip on top of the HUD (after so it is always visible)

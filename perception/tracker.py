@@ -75,6 +75,7 @@ class Track:
 
     smoothed_distance_m: Optional[float] = None
     closing_speed_mps:   float           = 0.0
+    closing_accel_mps2:  float           = 0.0
     ttc_s:               Optional[float] = None
 
     hits:              int = 0     # total matched detections
@@ -131,11 +132,12 @@ class Track:
         self.x1, self.y1, self.x2, self.y2 = nx1, ny1, nx2, ny2
 
     def _update_kinematics(self, det, dt: float) -> None:
-        """EMA the per-object distance, derive closing speed + TTC."""
+        """EMA the per-object distance, derive closing speed, closing accel + TTC."""
         raw_d = det.distance_m
         if self.smoothed_distance_m is None:
             self.smoothed_distance_m = raw_d
             self.closing_speed_mps = 0.0
+            self.closing_accel_mps2 = 0.0
             self.ttc_s = None
             return
 
@@ -146,6 +148,7 @@ class Track:
                 cfg.DIST_EMA_ALPHA * raw_d + (1 - cfg.DIST_EMA_ALPHA) * prev
             )
             inst_v = (prev - self.smoothed_distance_m) / dt        # + = approaching
+            prev_v = self.closing_speed_mps
             self.closing_speed_mps = (
                 cfg.CLOSING_EMA_ALPHA * inst_v
                 + (1 - cfg.CLOSING_EMA_ALPHA) * self.closing_speed_mps
@@ -153,17 +156,48 @@ class Track:
             self.closing_speed_mps = max(
                 -cfg.VCLOSE_CLAMP_MPS, min(cfg.VCLOSE_CLAMP_MPS, self.closing_speed_mps)
             )
+            if dt > 1e-6:
+                inst_a = (self.closing_speed_mps - prev_v) / dt
+                self.closing_accel_mps2 = 0.3 * inst_a + 0.7 * self.closing_accel_mps2
+                self.closing_accel_mps2 = max(-15.0, min(15.0, self.closing_accel_mps2))
         else:
             # A large jump for a SAME-identity track is bbox/monocular noise:
             # step toward the reading and don't trust closing this frame.
             step = min(cfg.MAX_DIST_STEP_M, jump)
             self.smoothed_distance_m = prev + step if raw_d > prev else prev - step
             self.closing_speed_mps = 0.0
+            self.closing_accel_mps2 = 0.0
 
-        self.ttc_s = (
-            self.smoothed_distance_m / self.closing_speed_mps
-            if self.closing_speed_mps > cfg.MIN_CLOSING_MPS else None
-        )
+        v = self.closing_speed_mps
+        d = self.smoothed_distance_m
+        a = self.closing_accel_mps2
+
+        if v > cfg.MIN_CLOSING_MPS:
+            ttc_1st = d / v
+            # If significant closing acceleration is detected, refine TTC with 2nd-order kinematics
+            if abs(a) > 0.5:
+                disc = v * v + 2.0 * a * d
+                if disc >= 0.0:
+                    t_root = (-v + (disc ** 0.5)) / a if a > 0 else (-v - (disc ** 0.5)) / a
+                    if 0.1 < t_root < 30.0:
+                        # Blend smooth 2nd-order root with 1st-order constant velocity baseline
+                        self.ttc_s = round(0.5 * ttc_1st + 0.5 * t_root, 2)
+                    else:
+                        self.ttc_s = ttc_1st
+                else:
+                    self.ttc_s = ttc_1st
+            else:
+                self.ttc_s = ttc_1st
+        elif a > 1.2 and d is not None:
+            # Sudden emergency deceleration of lead vehicle ahead even if current v <= MIN_CLOSING_MPS
+            disc = v * v + 2.0 * a * d
+            if disc >= 0.0:
+                t_root = (-v + (disc ** 0.5)) / a
+                self.ttc_s = round(t_root, 2) if 0.1 < t_root < 15.0 else None
+            else:
+                self.ttc_s = None
+        else:
+            self.ttc_s = None
 
     def _coast(self, dt: float) -> None:
         """No detection this frame.
@@ -196,6 +230,7 @@ class Track:
         else:
             # not closing, or the extrapolation budget is spent -> stop trusting it
             self.closing_speed_mps = 0.0
+            self.closing_accel_mps2 = 0.0
             self.ttc_s = None
 
 

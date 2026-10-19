@@ -90,6 +90,8 @@ class DrivingDecision:
     lane_confidence:    float = 0.0
     frame_index:        int   = 0
     fps:                float = 0.0
+    scout_hazard_type:       Optional[str]   = None
+    scout_recommended_speed: Optional[int]   = None
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +144,7 @@ class DecisionEngine:
     # ------------------------------------------------------------------
 
     def process(self, lane_result, tracks, detection_age_s: float = 0.0,
-                dms_result=None) -> DrivingDecision:
+                dms_result=None, scout_alert=None) -> DrivingDecision:
         """
         Fuse one frame of lane result + object tracks into a driving decision.
 
@@ -161,6 +163,10 @@ class DecisionEngine:
         (e.g. DROWSY, PHONE), the committed longitudinal level is raised to at
         least CAUTION. When False (default) the dms_result is advisory only and
         has no effect on the arbitrated decision.
+
+        scout_alert: optional RoadHazardAlert from Module 15 (TinyFishScout).
+        When severe environmental hazards (dense fog, waterlogging, accidents)
+        are scouted on the forward route, the decision is floored to CAUTION or SLOW.
         """
         self.frame_index += 1
         raw_dt = self._measure_dt()             # only used for the fps trust gate
@@ -261,6 +267,22 @@ class DecisionEngine:
             floored = True
             floor_reason = f"driver {dms_result.state} -- DMS alert"
 
+        # ── R-SCOUT: TinyFish environmental route hazard floor ──────────
+        # When an external hazard (FOG, WATERLOGGING, ACCIDENT) with HIGH/MEDIUM
+        # severity is scouted along the route, floor the longitudinal action
+        # to at least CAUTION, or SLOW if visibility/safety is critically compromised.
+        if scout_alert is not None and getattr(scout_alert, "hazard_type", "CLEAR") not in ("CLEAR", None):
+            sev = getattr(scout_alert, "severity", "LOW")
+            htype = getattr(scout_alert, "hazard_type", "HAZARD")
+            hdesc = getattr(scout_alert, "headline", "")
+            rec_spd = getattr(scout_alert, "recommended_speed_kmh", None)
+
+            target_floor = SLOW if (sev == "HIGH" or (rec_spd is not None and rec_spd <= 45)) else CAUTION
+            if committed < target_floor:
+                committed = target_floor
+                floored = True
+                floor_reason = f"Scout hazard [{htype}]: {hdesc}"
+
         self.committed_level = committed
         self.emergency_dwell = self.emergency_dwell + 1 if committed == EMERGENCY_STOP else 0
 
@@ -318,6 +340,8 @@ class DecisionEngine:
             lane_confidence=lane_conf,
             frame_index=self.frame_index,
             fps=fps,
+            scout_hazard_type=getattr(scout_alert, "hazard_type", None) if scout_alert is not None else None,
+            scout_recommended_speed=getattr(scout_alert, "recommended_speed_kmh", None) if scout_alert is not None else None,
         )
         self._last_decision = decision
         return decision

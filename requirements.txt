@@ -32,8 +32,9 @@ nncf>=2.9.0
 # ── Web UI (web_demo.py) ──────────────────────────────────────────────────────
 gradio>=4.0.0
 
-# ── TensorRT deployment (optional, NVIDIA hardware) ───────────────────────────
-tensorrt>=10.0.0
+# ── TensorRT deployment (optional, NVIDIA hardware only) ──────────────────────
+# Uncomment below only if running on NVIDIA GPU with TensorRT and CUDA installed:
+# tensorrt>=10.0.0
 
 # ── Module 9v2: Driver Monitoring System (DMS) ───────────────────────────────
 # MediaPipe provides FaceMesh (468 landmarks) for accurate gaze estimation,
