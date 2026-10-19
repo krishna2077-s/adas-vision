@@ -1,0 +1,591 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<OpenSCENARIO>
+   <FileHeader revMajor="1"
+               revMinor="1"
+               date="2026-10-18T12:00:00"
+               description="Hackathon-Ready Collision-Free High-Fidelity Indian Highway with Multi-Lane Traffic, Stray Cattle, Overtakers, Trucks, Buses, and Police Nakabandi"
+               author="ADAS Scenario Lab - SIH 2025"/>
+   
+   <ParameterDeclarations>
+      <ParameterDeclaration name="EgoSpeed_kmh" parameterType="double" value="72.0"/>
+      <ParameterDeclaration name="EgoStartS" parameterType="double" value="50.0"/>
+   </ParameterDeclarations>
+
+   <CatalogLocations>
+      <VehicleCatalog>
+         <Directory path="../xosc/Catalogs/Vehicles"/>
+      </VehicleCatalog>
+      <PedestrianCatalog>
+         <Directory path="../xosc/Catalogs/Pedestrians"/>
+      </PedestrianCatalog>
+      <MiscObjectCatalog>
+         <Directory path="../xosc/Catalogs/MiscObjects"/>
+      </MiscObjectCatalog>
+   </CatalogLocations>
+
+   <RoadNetwork>
+      <LogicFile filepath="../xodr/e6mini.xodr"/>
+      <SceneGraphFile filepath="../models/e6mini.osgb"/>
+   </RoadNetwork>
+
+   <Entities>
+      <!-- Ego Vehicle (White Sedan) in Middle Lane (-3) -->
+      <ScenarioObject name="Ego">
+         <CatalogReference catalogName="VehicleCatalog" entryName="car_white"/>
+      </ScenarioObject>
+
+      <!-- Traffic Participant 1: Leading Blue Sedan in Lane -3, 110m ahead -->
+      <ScenarioObject name="LeadCar">
+         <CatalogReference catalogName="VehicleCatalog" entryName="car_blue"/>
+      </ScenarioObject>
+
+      <!-- Traffic Participant 2: Red Overtaker in Fast Lane (-2), overtaking cleanly -->
+      <ScenarioObject name="OvertakerCar">
+         <CatalogReference catalogName="VehicleCatalog" entryName="car_red"/>
+      </ScenarioObject>
+
+      <!-- Traffic Participant 3: Yellow Taxi in Fast Lane (-2) ahead -->
+      <ScenarioObject name="YellowCab">
+         <CatalogReference catalogName="VehicleCatalog" entryName="car_yellow"/>
+      </ScenarioObject>
+
+      <!-- Traffic Participant 4: Highway Police Cruiser in Fast Lane (-2) -->
+      <ScenarioObject name="PoliceCar">
+         <CatalogReference catalogName="VehicleCatalog" entryName="car_police"/>
+      </ScenarioObject>
+
+      <!-- Traffic Participant 5: Heavy Goods Truck in Slow Lane (-4) -->
+      <ScenarioObject name="HeavyTruck">
+         <CatalogReference catalogName="VehicleCatalog" entryName="truck_yellow"/>
+      </ScenarioObject>
+
+      <!-- Traffic Participant 6: Passenger Bus in Slow Lane (-4) -->
+      <ScenarioObject name="CityBus">
+         <CatalogReference catalogName="VehicleCatalog" entryName="bus_blue"/>
+      </ScenarioObject>
+
+      <!-- Traffic Participant 7: Scooter in Slow Lane Shoulder (-4) -->
+      <ScenarioObject name="TwoWheeler">
+         <CatalogReference catalogName="VehicleCatalog" entryName="scooter"/>
+      </ScenarioObject>
+
+      <!-- Traffic Participant 8: Heavy Semi-Trailer Transport in Slow Lane (-4) -->
+      <ScenarioObject name="SemiTruck">
+         <CatalogReference catalogName="VehicleCatalog" entryName="semi_tractor"/>
+      </ScenarioObject>
+
+      <!-- Real-World Indian Road Hazard 1: Stray Cow / Cattle Crossing Highway -->
+      <ScenarioObject name="StrayCattle">
+         <MiscObject name="StrayCattle" mass="350" miscObjectCategory="obstacle" model3d="../models/moose_cc0.osgb">
+            <BoundingBox>
+               <Center x="1.10" y="0.0" z="0.75"/>
+               <Dimensions width="1.50" length="2.20" height="1.50"/>
+            </BoundingBox>
+            <Properties>
+               <Property name="scaleMode" value="ModelToBB"/>
+            </Properties>
+         </MiscObject>
+      </ScenarioObject>
+
+      <!-- Real-World Hazard 2: Second Cattle stationary on shoulder -->
+      <ScenarioObject name="ShoulderCattle">
+         <MiscObject name="ShoulderCattle" mass="400" miscObjectCategory="obstacle" model3d="../models/moose_cc0.osgb">
+            <BoundingBox>
+               <Center x="1.10" y="0.0" z="0.75"/>
+               <Dimensions width="1.50" length="2.20" height="1.50"/>
+            </BoundingBox>
+            <Properties>
+               <Property name="scaleMode" value="ModelToBB"/>
+            </Properties>
+         </MiscObject>
+      </ScenarioObject>
+
+      <!-- Real-World Hazard 3: Police Nakabandi Cones in Slow Lane (-4) -->
+      <ScenarioObject name="PoliceBarricade">
+         <MiscObject name="PoliceBarricade" mass="100" miscObjectCategory="barrier" model3d="../models/cone-100.osgb">
+            <BoundingBox>
+               <Center x="0.0" y="0.0" z="0.5"/>
+               <Dimensions width="0.8" length="2.5" height="1.0"/>
+            </BoundingBox>
+            <Properties>
+               <Property name="scaleMode" value="ModelToBB"/>
+            </Properties>
+         </MiscObject>
+      </ScenarioObject>
+
+      <!-- Real-World Hazard 4: Pedestrian walking along road verge -->
+      <ScenarioObject name="VergePedestrian">
+         <Pedestrian name="VergePedestrian" pedestrianCategory="pedestrian" mass="75" model3d="../models/walkman.osgb">
+            <BoundingBox>
+               <Center x="0.0" y="0.0" z="0.9"/>
+               <Dimensions width="0.5" length="0.5" height="1.8"/>
+            </BoundingBox>
+            <Properties>
+               <Property name="scaleMode" value="BBToModel"/>
+            </Properties>
+         </Pedestrian>
+      </ScenarioObject>
+   </Entities>
+
+   <Storyboard>
+      <Init>
+         <Actions>
+            <!-- 1. Ego Vehicle: Lane -3 (Middle Lane) at s=60m, speed=75 km/h (20.8 m/s) -->
+            <Private entityRef="Ego">
+               <PrivateAction>
+                  <TeleportAction>
+                     <Position>
+                        <LanePosition roadId="0" laneId="-3" offset="0.0" s="$EgoStartS"/>
+                     </Position>
+                  </TeleportAction>
+               </PrivateAction>
+               <PrivateAction>
+                  <LongitudinalAction>
+                     <SpeedAction>
+                        <SpeedActionDynamics dynamicsShape="step" dynamicsDimension="time" value="0.0"/>
+                        <SpeedActionTarget>
+                           <AbsoluteTargetSpeed value="${$EgoSpeed_kmh / 3.6}"/>
+                        </SpeedActionTarget>
+                     </SpeedAction>
+                  </LongitudinalAction>
+               </PrivateAction>
+            </Private>
+
+            <!-- 2. Lead Car: Lane -3 at s=150m (100m ahead of Ego), speed=72 km/h (20.0 m/s) -->
+            <Private entityRef="LeadCar">
+               <PrivateAction>
+                  <TeleportAction>
+                     <Position>
+                        <LanePosition roadId="0" laneId="-3" offset="0.0" s="150.0"/>
+                     </Position>
+                  </TeleportAction>
+               </PrivateAction>
+               <PrivateAction>
+                  <LongitudinalAction>
+                     <SpeedAction>
+                        <SpeedActionDynamics dynamicsShape="step" dynamicsDimension="time" value="0.0"/>
+                        <SpeedActionTarget>
+                           <AbsoluteTargetSpeed value="20.0"/>
+                        </SpeedActionTarget>
+                     </SpeedAction>
+                  </LongitudinalAction>
+               </PrivateAction>
+            </Private>
+
+            <!-- 3. Red Overtaker: Lane -2 (Fast Lane) at s=10m (40m behind Ego), speed=86.4 km/h (24.0 m/s) -->
+            <Private entityRef="OvertakerCar">
+               <PrivateAction>
+                  <TeleportAction>
+                     <Position>
+                        <LanePosition roadId="0" laneId="-2" offset="0.0" s="10.0"/>
+                     </Position>
+                  </TeleportAction>
+               </PrivateAction>
+               <PrivateAction>
+                  <LongitudinalAction>
+                     <SpeedAction>
+                        <SpeedActionDynamics dynamicsShape="step" dynamicsDimension="time" value="0.0"/>
+                        <SpeedActionTarget>
+                           <AbsoluteTargetSpeed value="24.0"/>
+                        </SpeedActionTarget>
+                     </SpeedAction>
+                  </LongitudinalAction>
+               </PrivateAction>
+            </Private>
+
+            <!-- 4. Yellow Taxi: Lane -2 (Fast Lane) at s=420m, speed=82.8 km/h (23.0 m/s) -->
+            <Private entityRef="YellowCab">
+               <PrivateAction>
+                  <TeleportAction>
+                     <Position>
+                        <LanePosition roadId="0" laneId="-2" offset="0.0" s="420.0"/>
+                     </Position>
+                  </TeleportAction>
+               </PrivateAction>
+               <PrivateAction>
+                  <LongitudinalAction>
+                     <SpeedAction>
+                        <SpeedActionDynamics dynamicsShape="step" dynamicsDimension="time" value="0.0"/>
+                        <SpeedActionTarget>
+                           <AbsoluteTargetSpeed value="23.0"/>
+                        </SpeedActionTarget>
+                     </SpeedAction>
+                  </LongitudinalAction>
+               </PrivateAction>
+            </Private>
+
+            <!-- 5. Police Cruiser: Lane -2 at s=680m, speed=80 km/h (22.2 m/s) -->
+            <Private entityRef="PoliceCar">
+               <PrivateAction>
+                  <TeleportAction>
+                     <Position>
+                        <LanePosition roadId="0" laneId="-2" offset="0.0" s="680.0"/>
+                     </Position>
+                  </TeleportAction>
+               </PrivateAction>
+               <PrivateAction>
+                  <LongitudinalAction>
+                     <SpeedAction>
+                        <SpeedActionDynamics dynamicsShape="step" dynamicsDimension="time" value="0.0"/>
+                        <SpeedActionTarget>
+                           <AbsoluteTargetSpeed value="22.2"/>
+                        </SpeedActionTarget>
+                     </SpeedAction>
+                  </LongitudinalAction>
+               </PrivateAction>
+            </Private>
+
+            <!-- 6. Heavy Yellow Truck: Lane -4 (Slow Lane) at s=90m, speed=50.4 km/h (14.0 m/s) -->
+            <Private entityRef="HeavyTruck">
+               <PrivateAction>
+                  <TeleportAction>
+                     <Position>
+                        <LanePosition roadId="0" laneId="-4" offset="0.0" s="90.0"/>
+                     </Position>
+                  </TeleportAction>
+               </PrivateAction>
+               <PrivateAction>
+                  <LongitudinalAction>
+                     <SpeedAction>
+                        <SpeedActionDynamics dynamicsShape="step" dynamicsDimension="time" value="0.0"/>
+                        <SpeedActionTarget>
+                           <AbsoluteTargetSpeed value="14.0"/>
+                        </SpeedActionTarget>
+                     </SpeedAction>
+                  </LongitudinalAction>
+               </PrivateAction>
+            </Private>
+
+            <!-- 7. Passenger Bus: Lane -4 at s=320m, speed=50.4 km/h (14.0 m/s) -->
+            <Private entityRef="CityBus">
+               <PrivateAction>
+                  <TeleportAction>
+                     <Position>
+                        <LanePosition roadId="0" laneId="-4" offset="0.0" s="320.0"/>
+                     </Position>
+                  </TeleportAction>
+               </PrivateAction>
+               <PrivateAction>
+                  <LongitudinalAction>
+                     <SpeedAction>
+                        <SpeedActionDynamics dynamicsShape="step" dynamicsDimension="time" value="0.0"/>
+                        <SpeedActionTarget>
+                           <AbsoluteTargetSpeed value="14.0"/>
+                        </SpeedActionTarget>
+                     </SpeedAction>
+                  </LongitudinalAction>
+               </PrivateAction>
+            </Private>
+
+            <!-- 8. Scooter: Lane -4 right margin at s=30m, speed=39.6 km/h (11.0 m/s) -->
+            <Private entityRef="TwoWheeler">
+               <PrivateAction>
+                  <TeleportAction>
+                     <Position>
+                        <LanePosition roadId="0" laneId="-4" offset="1.2" s="30.0"/>
+                     </Position>
+                  </TeleportAction>
+               </PrivateAction>
+               <PrivateAction>
+                  <LongitudinalAction>
+                     <SpeedAction>
+                        <SpeedActionDynamics dynamicsShape="step" dynamicsDimension="time" value="0.0"/>
+                        <SpeedActionTarget>
+                           <AbsoluteTargetSpeed value="11.0"/>
+                        </SpeedActionTarget>
+                     </SpeedAction>
+                  </LongitudinalAction>
+               </PrivateAction>
+            </Private>
+
+            <!-- 9. Semi-Trailer Transport: Lane -4 at s=540m, speed=46.8 km/h (13.0 m/s) -->
+            <Private entityRef="SemiTruck">
+               <PrivateAction>
+                  <TeleportAction>
+                     <Position>
+                        <LanePosition roadId="0" laneId="-4" offset="0.0" s="540.0"/>
+                     </Position>
+                  </TeleportAction>
+               </PrivateAction>
+               <PrivateAction>
+                  <LongitudinalAction>
+                     <SpeedAction>
+                        <SpeedActionDynamics dynamicsShape="step" dynamicsDimension="time" value="0.0"/>
+                        <SpeedActionTarget>
+                           <AbsoluteTargetSpeed value="13.0"/>
+                        </SpeedActionTarget>
+                     </SpeedAction>
+                  </LongitudinalAction>
+               </PrivateAction>
+            </Private>
+
+            <!-- 10. Stray Cattle: Placed on right shoulder (lane -5) at s=580m -->
+            <Private entityRef="StrayCattle">
+               <PrivateAction>
+                  <TeleportAction>
+                     <Position>
+                        <LanePosition roadId="0" laneId="-5" offset="1.0" s="580.0">
+                           <Orientation type="relative" h="1.57"/>
+                        </LanePosition>
+                     </Position>
+                  </TeleportAction>
+               </PrivateAction>
+            </Private>
+
+            <!-- 11. Stationary Shoulder Cattle: Resting at s=360m on right shoulder -->
+            <Private entityRef="ShoulderCattle">
+               <PrivateAction>
+                  <TeleportAction>
+                     <Position>
+                        <LanePosition roadId="0" laneId="-5" offset="0.5" s="360.0"/>
+                     </Position>
+                  </TeleportAction>
+               </PrivateAction>
+            </Private>
+
+            <!-- 12. Police Nakabandi Cones: Safely placed on shoulder (lane -5) at s=760m -->
+            <Private entityRef="PoliceBarricade">
+               <PrivateAction>
+                  <TeleportAction>
+                     <Position>
+                        <LanePosition roadId="0" laneId="-5" offset="0.0" s="760.0"/>
+                     </Position>
+                  </TeleportAction>
+               </PrivateAction>
+            </Private>
+
+            <!-- 13. Pedestrian on Shoulder: Walking along shoulder at s=220m -->
+            <Private entityRef="VergePedestrian">
+               <PrivateAction>
+                  <TeleportAction>
+                     <Position>
+                        <LanePosition roadId="0" laneId="-5" offset="0.4" s="220.0"/>
+                     </Position>
+                  </TeleportAction>
+               </PrivateAction>
+               <PrivateAction>
+                  <LongitudinalAction>
+                     <SpeedAction>
+                        <SpeedActionDynamics dynamicsShape="step" dynamicsDimension="time" value="0.0"/>
+                        <SpeedActionTarget>
+                           <AbsoluteTargetSpeed value="1.2"/>
+                        </SpeedActionTarget>
+                     </SpeedAction>
+                  </LongitudinalAction>
+               </PrivateAction>
+            </Private>
+         </Actions>
+      </Init>
+
+      <Story name="IndianHighwayDynamicStory">
+         <Act name="HighwayDynamicAct">
+            
+            <!-- Maneuver 1: Red Overtaker in fast lane (-2) accelerates smoothly to 94 km/h to pass Ego cleanly without lane cut-in -->
+            <ManeuverGroup maximumExecutionCount="1" name="OvertakerGroup">
+               <Actors selectTriggeringEntities="false">
+                  <EntityRef entityRef="OvertakerCar"/>
+               </Actors>
+               <Maneuver name="FastLaneCruiseManeuver">
+                  <Event name="OvertakerSpeedEvent" priority="overwrite">
+                     <Action name="OvertakerSpeedAction">
+                        <PrivateAction>
+                           <LongitudinalAction>
+                              <SpeedAction>
+                                 <SpeedActionDynamics dynamicsShape="linear" value="3.0" dynamicsDimension="time"/>
+                                 <SpeedActionTarget>
+                                    <AbsoluteTargetSpeed value="26.0"/>
+                                 </SpeedActionTarget>
+                              </SpeedAction>
+                           </LongitudinalAction>
+                        </PrivateAction>
+                     </Action>
+                     <StartTrigger>
+                        <ConditionGroup>
+                           <Condition name="OvertakeTimeCondition" delay="0.0" edge="rising">
+                              <ByValueCondition>
+                                 <SimulationTimeCondition value="4.0" rule="greaterThan"/>
+                              </ByValueCondition>
+                           </Condition>
+                        </ConditionGroup>
+                     </StartTrigger>
+                  </Event>
+               </Maneuver>
+            </ManeuverGroup>
+
+            <!-- Maneuver 2: Stray Cattle begins slowly moving near road border at t=13.0s -->
+            <ManeuverGroup maximumExecutionCount="1" name="CattleCrossingGroup">
+               <Actors selectTriggeringEntities="false">
+                  <EntityRef entityRef="StrayCattle"/>
+               </Actors>
+               <Maneuver name="CattleCrossingManeuver">
+                  <Event name="CattleCrossEvent" priority="overwrite">
+                     <Action name="CattleWalkAction">
+                        <PrivateAction>
+                           <LateralAction>
+                              <LaneChangeAction>
+                                 <LaneChangeActionDynamics dynamicsShape="linear" value="14.0" dynamicsDimension="time"/>
+                                 <LaneChangeTarget>
+                                    <RelativeTargetLane entityRef="StrayCattle" value="1"/>
+                                 </LaneChangeTarget>
+                              </LaneChangeAction>
+                           </LateralAction>
+                        </PrivateAction>
+                     </Action>
+                     <StartTrigger>
+                        <ConditionGroup>
+                           <Condition name="CattleTimeTrigger" delay="0.0" edge="rising">
+                              <ByValueCondition>
+                                 <SimulationTimeCondition value="13.0" rule="greaterThan"/>
+                              </ByValueCondition>
+                           </Condition>
+                        </ConditionGroup>
+                     </StartTrigger>
+                  </Event>
+               </Maneuver>
+            </ManeuverGroup>
+
+            <!-- Maneuver 3: Lead Vehicle reacts to hazard at t=13s, smoothly decelerates, then recovers at t=25s -->
+            <ManeuverGroup maximumExecutionCount="1" name="LeadVehicleReactionGroup">
+               <Actors selectTriggeringEntities="false">
+                  <EntityRef entityRef="LeadCar"/>
+               </Actors>
+               <Maneuver name="LeadBrakingAndRecoveryManeuver">
+                  <Event name="LeadBrakeEvent" priority="overwrite">
+                     <Action name="LeadBrakeAction">
+                        <PrivateAction>
+                           <LongitudinalAction>
+                              <SpeedAction>
+                                 <SpeedActionDynamics dynamicsShape="linear" value="4.0" dynamicsDimension="time"/>
+                                 <SpeedActionTarget>
+                                    <AbsoluteTargetSpeed value="11.1"/>
+                                 </SpeedActionTarget>
+                              </SpeedAction>
+                           </LongitudinalAction>
+                        </PrivateAction>
+                     </Action>
+                     <StartTrigger>
+                        <ConditionGroup>
+                           <Condition name="LeadBrakeTrigger" delay="0.0" edge="rising">
+                              <ByValueCondition>
+                                 <SimulationTimeCondition value="13.0" rule="greaterThan"/>
+                              </ByValueCondition>
+                           </Condition>
+                        </ConditionGroup>
+                     </StartTrigger>
+                  </Event>
+                  <Event name="LeadResumeEvent" priority="overwrite">
+                     <Action name="LeadResumeAction">
+                        <PrivateAction>
+                           <LongitudinalAction>
+                              <SpeedAction>
+                                 <SpeedActionDynamics dynamicsShape="linear" value="4.0" dynamicsDimension="time"/>
+                                 <SpeedActionTarget>
+                                    <AbsoluteTargetSpeed value="20.0"/>
+                                 </SpeedActionTarget>
+                              </SpeedAction>
+                           </LongitudinalAction>
+                        </PrivateAction>
+                     </Action>
+                     <StartTrigger>
+                        <ConditionGroup>
+                           <Condition name="LeadResumeTrigger" delay="0.0" edge="rising">
+                              <ByValueCondition>
+                                 <SimulationTimeCondition value="25.0" rule="greaterThan"/>
+                              </ByValueCondition>
+                           </Condition>
+                        </ConditionGroup>
+                     </StartTrigger>
+                  </Event>
+               </Maneuver>
+            </ManeuverGroup>
+
+            <!-- Maneuver 4: Ego ADAS Autonomous Emergency Braking (AEB) / ACC Deceleration & Resume -->
+            <ManeuverGroup maximumExecutionCount="1" name="EgoADASGroup">
+               <Actors selectTriggeringEntities="false">
+                  <EntityRef entityRef="Ego"/>
+               </Actors>
+               <Maneuver name="EgoADASResponseManeuver">
+                  <Event name="EgoAEBEvent" priority="overwrite">
+                     <Action name="EgoAEBAction">
+                        <PrivateAction>
+                           <LongitudinalAction>
+                              <SpeedAction>
+                                 <SpeedActionDynamics dynamicsShape="linear" value="4.0" dynamicsDimension="time"/>
+                                 <SpeedActionTarget>
+                                    <AbsoluteTargetSpeed value="10.0"/>
+                                 </SpeedActionTarget>
+                              </SpeedAction>
+                           </LongitudinalAction>
+                        </PrivateAction>
+                     </Action>
+                     <StartTrigger>
+                        <ConditionGroup>
+                           <Condition name="EgoAEBTrigger" delay="0.0" edge="rising">
+                              <ByValueCondition>
+                                 <SimulationTimeCondition value="14.0" rule="greaterThan"/>
+                              </ByValueCondition>
+                           </Condition>
+                        </ConditionGroup>
+                     </StartTrigger>
+                  </Event>
+                  <Event name="EgoResumeEvent" priority="overwrite">
+                     <Action name="EgoResumeAction">
+                        <PrivateAction>
+                           <LongitudinalAction>
+                              <SpeedAction>
+                                 <SpeedActionDynamics dynamicsShape="linear" value="4.0" dynamicsDimension="time"/>
+                                 <SpeedActionTarget>
+                                    <AbsoluteTargetSpeed value="20.0"/>
+                                 </SpeedActionTarget>
+                              </SpeedAction>
+                           </LongitudinalAction>
+                        </PrivateAction>
+                     </Action>
+                     <StartTrigger>
+                        <ConditionGroup>
+                           <Condition name="EgoResumeTrigger" delay="0.0" edge="rising">
+                              <ByValueCondition>
+                                 <SimulationTimeCondition value="26.0" rule="greaterThan"/>
+                              </ByValueCondition>
+                           </Condition>
+                        </ConditionGroup>
+                     </StartTrigger>
+                  </Event>
+               </Maneuver>
+            </ManeuverGroup>
+
+            <StartTrigger>
+               <ConditionGroup>
+                  <Condition name="ActStartCondition" delay="0.0" edge="none">
+                     <ByValueCondition>
+                        <SimulationTimeCondition value="0.0" rule="greaterThan"/>
+                     </ByValueCondition>
+                  </Condition>
+               </ConditionGroup>
+            </StartTrigger>
+
+            <StopTrigger>
+               <ConditionGroup>
+                  <Condition name="MaxTimeSimulation" delay="0.0" edge="rising">
+                     <ByValueCondition>
+                        <SimulationTimeCondition value="60.0" rule="greaterThan"/>
+                     </ByValueCondition>
+                  </Condition>
+               </ConditionGroup>
+            </StopTrigger>
+
+         </Act>
+      </Story>
+
+      <StopTrigger>
+         <ConditionGroup>
+            <Condition name="StoryBoardStopCondition" delay="0.0" edge="rising">
+               <ByValueCondition>
+                  <SimulationTimeCondition value="60.0" rule="greaterThan"/>
+               </ByValueCondition>
+            </Condition>
+         </ConditionGroup>
+      </StopTrigger>
+
+   </Storyboard>
+</OpenSCENARIO>

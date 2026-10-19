@@ -116,12 +116,19 @@ output_*.png
 output_*.jpg
 
 # Scenario Lab temp runs & generated files
-scenario_lab/generated/
+scenario_lab/generated/*
+!scenario_lab/generated/real_world_indian_highway.xosc
 scenario_lab/storage/db/results/*.json
 scenario_lab/storage/db/scenarios/osm-*.json
 scenario_lab/storage/db/scenarios/test_*.json
 scenario_lab/storage/db/scenarios/in_memory_*.json
 scenario_lab/storage/db/scenarios/text_generated_*.json
+
+# Standalone external simulator tools & logs
+tools/
+log.txt
+cockpit_*preview*.png
+cockpit_preview.png
 
 # Agent & workspace artifacts
 .agents/

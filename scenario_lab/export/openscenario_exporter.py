@@ -82,23 +82,72 @@ OPENSCENARIO_ACTOR_MAP: Dict[str, Tuple[str, str, float, float, float]] = {
     "obstacle":             ("miscellaneous", "obstacle", 1.5, 1.5, 1.0),
 }
 
+# 3D Model mapping for esmini and RoadRunner 3D visualizers
+OPENSCENARIO_3D_MODELS: Dict[str, str] = {
+    "car":                  "../models/car_white.osgb",
+    "suv":                  "../models/car_blue.osgb",
+    "truck":                "../models/truck_yellow.osgb",
+    "bus":                  "../models/bus_blue.osgb",
+    "motorcycle":           "../models/scooter.osgb",
+    "scooter":              "../models/scooter.osgb",
+    "bicycle":              "../models/cyclist.osgb",
+    "person":               "../models/walkman.osgb",
+    "pedestrian":           "../models/walkman.osgb",
+    "auto_rickshaw":        "../models/car_yellow.osgb",
+    "e_rickshaw":           "../models/car_yellow.osgb",
+    "cow":                  "../models/moose_cc0.osgb",
+    "buffalo":              "../models/moose_cc0.osgb",
+    "dog":                  "../models/moose_cc0.osgb",
+    "goat":                 "../models/moose_cc0.osgb",
+    "barricade":            "../models/railing.osgb",
+    "barrier":              "../models/railing.osgb",
+    "police_barricade":     "../models/railing.osgb",
+    "construction_barrier": "../models/cone-100.osgb",
+}
+
 
 def _get_actor_osc_spec(actor_class: str) -> Tuple[str, str, float, float, float]:
     cls_clean = actor_class.lower().strip()
     return OPENSCENARIO_ACTOR_MAP.get(cls_clean, ("miscellaneous", "obstacle", 2.0, 1.0, 1.2))
 
 
-def export_to_openscenario(scenario: "Scenario", xodr_filename: Optional[str] = None) -> str:
+def export_to_openscenario(scenario: Any, xodr_filename: Optional[str] = None) -> str:
     """
     Export a Scenario instance into an ASAM OpenSCENARIO v1.2 XML string.
     
     Args:
-        scenario: Valid scenario_lab Scenario instance.
+        scenario: Valid scenario_lab Scenario instance, dict, filepath, or template ID.
         xodr_filename: Optional path to the linked OpenDRIVE file. Defaults to '{scenario_id}.xodr'.
     
     Returns:
         Formatted XML string conforming to ASAM OpenSCENARIO.
     """
+    target = scenario
+    if isinstance(target, str):
+        if os.path.isfile(target):
+            with open(target, "r", encoding="utf-8") as f:
+                target = json.load(f)
+        else:
+            storage_path = os.path.join(_SCENARIO_LAB, "storage", "db", "scenarios", f"{target}.json")
+            if os.path.isfile(storage_path):
+                with open(storage_path, "r", encoding="utf-8") as f:
+                    target = json.load(f)
+            else:
+                templates_path = os.path.join(_SCENARIO_LAB, "templates", "indian_road_templates.json")
+                if os.path.isfile(templates_path):
+                    with open(templates_path, "r", encoding="utf-8") as f:
+                        templates = json.load(f)
+                        for t in templates:
+                            if t.get("id") == target:
+                                target = t["scenario"]
+                                break
+    if isinstance(target, dict):
+        if "scenario" in target:
+            target = Scenario.model_validate(target["scenario"])
+        else:
+            target = Scenario.model_validate(target)
+    scenario = target
+
     if xodr_filename is None:
         xodr_filename = f"{scenario.scenario_id}.xodr"
 
@@ -142,6 +191,7 @@ def export_to_openscenario(scenario: "Scenario", xodr_filename: Optional[str] = 
     ego_veh = ET.SubElement(ego_obj, "Vehicle", {
         "name": "EgoVehicle",
         "vehicleCategory": "car",
+        "model3d": "../models/car_white.osgb",
     })
     ego_bb = ET.SubElement(ego_veh, "BoundingBox")
     ET.SubElement(ego_bb, "Center", {"x": "1.4", "y": "0.0", "z": "0.7"})
@@ -171,16 +221,20 @@ def export_to_openscenario(scenario: "Scenario", xodr_filename: Optional[str] = 
     for actor in scenario.actors:
         a_class = getattr(actor, "actor_class", None) or getattr(actor, "class", "car")
         category, osc_type, def_l, def_w, def_h = _get_actor_osc_spec(a_class)
+        model_3d = OPENSCENARIO_3D_MODELS.get(str(a_class).lower().strip(), "")
         act_l = actor.length_m if actor.length_m else def_l
         act_w = actor.width_m if actor.width_m else def_w
         act_h = def_h
 
         act_obj = ET.SubElement(entities, "ScenarioObject", {"name": actor.id})
         if category == "vehicle":
-            v_elem = ET.SubElement(act_obj, "Vehicle", {
+            v_attrs = {
                 "name": f"Vehicle_{actor.id}_{a_class}",
                 "vehicleCategory": osc_type,
-            })
+            }
+            if model_3d:
+                v_attrs["model3d"] = model_3d
+            v_elem = ET.SubElement(act_obj, "Vehicle", v_attrs)
             bb = ET.SubElement(v_elem, "BoundingBox")
             ET.SubElement(bb, "Center", {"x": f"{act_l/2:.2f}", "y": "0.0", "z": f"{act_h/2:.2f}"})
             ET.SubElement(bb, "Dimensions", {"width": f"{act_w:.2f}", "length": f"{act_l:.2f}", "height": f"{act_h:.2f}"})
@@ -189,20 +243,26 @@ def export_to_openscenario(scenario: "Scenario", xodr_filename: Optional[str] = 
             ET.SubElement(ax, "FrontAxle", {"maxSteering": "0.5", "wheelDiameter": "0.6", "trackWidth": f"{act_w*0.8:.2f}", "positionX": f"{act_l*0.6:.2f}", "positionZ": "0.3"})
             ET.SubElement(ax, "RearAxle", {"maxSteering": "0.0", "wheelDiameter": "0.6", "trackWidth": f"{act_w*0.8:.2f}", "positionX": "0.0", "positionZ": "0.3"})
         elif category == "pedestrian":
-            p_elem = ET.SubElement(act_obj, "Pedestrian", {
+            p_attrs = {
                 "name": f"Pedestrian_{actor.id}_{a_class}",
                 "pedestrianCategory": "pedestrian",
                 "mass": "70",
-            })
+            }
+            if model_3d:
+                p_attrs["model3d"] = model_3d
+            p_elem = ET.SubElement(act_obj, "Pedestrian", p_attrs)
             bb = ET.SubElement(p_elem, "BoundingBox")
             ET.SubElement(bb, "Center", {"x": "0.0", "y": "0.0", "z": f"{act_h/2:.2f}"})
             ET.SubElement(bb, "Dimensions", {"width": f"{act_w:.2f}", "length": f"{act_l:.2f}", "height": f"{act_h:.2f}"})
         else:
-            m_elem = ET.SubElement(act_obj, "MiscObject", {
+            m_attrs = {
                 "name": f"Obstacle_{actor.id}_{a_class}",
                 "miscObjectCategory": "obstacle",
-                "mass": "300" if "cow" in a_class or "buffalo" in a_class else "50",
-            })
+                "mass": "300" if ("cow" in str(a_class) or "buffalo" in str(a_class)) else "50",
+            }
+            if model_3d:
+                m_attrs["model3d"] = model_3d
+            m_elem = ET.SubElement(act_obj, "MiscObject", m_attrs)
             bb = ET.SubElement(m_elem, "BoundingBox")
             ET.SubElement(bb, "Center", {"x": f"{act_l/2:.2f}", "y": "0.0", "z": f"{act_h/2:.2f}"})
             ET.SubElement(bb, "Dimensions", {"width": f"{act_w:.2f}", "length": f"{act_l:.2f}", "height": f"{act_h:.2f}"})
@@ -233,7 +293,7 @@ def export_to_openscenario(scenario: "Scenario", xodr_filename: Optional[str] = 
     env_action = ET.SubElement(global_action, "EnvironmentAction")
     env_elem = ET.SubElement(env_action, "Environment", {"name": f"IndianEnv_{weather_cond}_{tod}"})
 
-    tod_map = {"day": "2026-10-17T12:00:00", "dusk": "2026-10-17T18:15:00", "night": "2026-10-17T22:30:00"}
+    tod_map = {"day": "2026-10-17T12:00:00", "dusk": "2026-10-17T16:00:00", "night": "2026-10-17T21:00:00"}
     ET.SubElement(env_elem, "TimeOfDay", {
         "animation": "false",
         "dateTime": tod_map.get(tod, "2026-10-17T12:00:00"),
@@ -241,8 +301,8 @@ def export_to_openscenario(scenario: "Scenario", xodr_filename: Optional[str] = 
 
     cloud_state = "overcast" if weather_cond in ("overcast", "heavy_rain", "light_rain") else "skyOff"
     weather_elem = ET.SubElement(env_elem, "Weather", {"cloudState": cloud_state})
-    sun_intensity = "0.2" if tod == "night" else ("0.5" if tod == "dusk" or weather_cond == "heavy_rain" else "0.9")
-    ET.SubElement(weather_elem, "Sun", {"intensity": sun_intensity, "azimuth": "1.57", "elevation": "0.78"})
+    sun_intensity = "0.4" if tod == "night" else ("0.85" if tod == "dusk" or weather_cond == "heavy_rain" else "1.0")
+    ET.SubElement(weather_elem, "Sun", {"intensity": sun_intensity, "azimuth": "1.57", "elevation": "1.10"})
     ET.SubElement(weather_elem, "Fog", {"visualRange": f"{vis_m:.1f}"})
 
     if weather_cond in ("heavy_rain", "light_rain"):
@@ -446,14 +506,13 @@ def export_to_openscenario(scenario: "Scenario", xodr_filename: Optional[str] = 
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Export scenario to ASAM OpenSCENARIO (.xosc)")
-    parser.add_argument("--scenario", required=True, help="Path to scenario JSON or scenario ID")
+    parser.add_argument("--scenario", required=True, help="Path to scenario JSON, scenario ID, or template ID")
     parser.add_argument("--output", required=True, help="Path for output .xosc file")
+    parser.add_argument("--xodr", default=None, help="Linked OpenDRIVE (.xodr) filename or relative path")
     args = parser.parse_args()
 
-    with open(args.scenario, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    sc = Scenario.model_validate(data)
-    xml_out = export_to_openscenario(sc)
+    xml_out = export_to_openscenario(args.scenario, xodr_filename=args.xodr)
+    os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
     with open(args.output, "w", encoding="utf-8") as f:
         f.write(xml_out)
-    print(f"Exported OpenSCENARIO to {args.output}")
+    print(f"[OK] Exported OpenSCENARIO to {args.output}")
