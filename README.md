@@ -224,6 +224,40 @@ This pulls in OpenCV, NumPy, Ultralytics (which brings a CPU build of PyTorch fo
 - **OpenVINO iGPU acceleration** — `pip install openvino nncf`, then `python export/export_openvino.py`. On Intel hardware this is the fastest road-model backend (see *Real-time performance*); without it, `LEARNED_BACKEND="openvino"` falls back to ONNX then PyTorch.
 - **Traffic-sign recognition (Module 11b)** — needs `gtsrb_sign_cnn.pth`, trained in ~5 min on CPU with `python training/train_signs.py` once you've downloaded GTSRB (Kaggle: *GTSRB — German Traffic Sign*). Until then the sign recogniser is inert; traffic-**light** state works with no extra setup.
 
+## Module 15: TinyFish AI Web Hazard & Route Scout
+
+Integrates [TinyFish AI](https://agent.tinyfish.ai) to scout live external route conditions, weather warnings (IMD), traffic bottlenecks, waterlogging, and highway incidents ahead of the ego vehicle. Unlike decorative overlays, Module 15 operates in a **closed-loop advisory architecture**:
+
+```
+[TinyFish Web Scout (Daemon)]
+       │
+       ├── Tier 1: Search API (Free, 12k/day)
+       ├── Tier 1.5: Fetch API (Markdown extraction from IMD / Traffic Police)
+       └── Tier 2: Autonomous Web Agent ($0.016/step, on-demand)
+       │
+       ▼
+[RoadHazardAlert (TTL Cache: 300s, Scoped by Heading + KM Progression)]
+       │
+       ├──► Prediction Planner (Module 7): Caps cruise speed target to safe limit
+       ├──► Decision Engine (Module 3): Evaluates Rule R-SCOUT & widens TTC margin (+0.5s)
+       ├──► Black-Box Drive Logger (Module 12): Records alert JSONL for post-drive replay
+       ├──► UDP Co-Simulation (Port 5005): Broadcasts live hazard & speed caps to MATLAB
+       └──► Web Debugger (demo/web_demo.py): Interactive Gradio UI & HUD preview
+```
+
+### Key Features:
+- **Corridor-Scoped Telemetry**: Scopes queries by highway, heading (`--tinyfish-heading Southbound`), and progress marker (`--tinyfish-km 24.0`) to avoid false-positive alerts behind the vehicle or in opposite carriageways.
+- **Credit-Conservative Multi-Tier Escalation**: Uses the free search gateway and markdown fetch parser first, reserving paid browser agents only for complex multi-step portals.
+- **Staleness Expiry**: Automatically tags alerts older than 300s as `[STALE SCOUT]`, gracefully de-escalating decision engine floors while maintaining driver awareness.
+- **Run Standalone**:
+  ```bash
+  python perception/tinyfish_scout.py --location "NH48 Delhi Gurgaon" --heading Southbound --km 35 --mock
+  ```
+- **Run Live in ADAS Vision**:
+  ```bash
+  python core/main.py --video dashcam.mp4 --tinyfish --tinyfish-location "NH48 Delhi-Gurgaon" --tinyfish-heading Southbound --tinyfish-km 24.0
+  ```
+
 ## Adverse-condition robustness (Phase 12)
 
 Two independent ways to make drivable-area detection hold up at night and in bad weather — the model's known weak spot. Both are measured against a deliberately **tougher** hard metric than before (night **+ fog + rain**, not just night+fog); on it the Phase 6c model scores ~0.78 vs ~0.92 on the old metric, so there's genuine headroom.

@@ -73,7 +73,8 @@ class DriveLogger:
 
     def log(self, frame_index: int, decision, tracks: Optional[List] = None,
             fcw=None, light_state: Optional[str] = None,
-            speed_limit_kmh: Optional[int] = None, plan=None, control=None) -> None:
+            speed_limit_kmh: Optional[int] = None, plan=None, control=None,
+            dms_state: Optional[str] = None, scout_alert=None) -> None:
         """Append one frame record. All arguments except frame_index are optional."""
         rec = {"type": "frame", "i": frame_index, "t": self._t_ms()}
 
@@ -125,6 +126,19 @@ class DriveLogger:
                  "rk": getattr(t, "risk", None)}
                 for t in tracks if getattr(t, "confirmed", False)
             ]
+
+        if dms_state is not None:
+            rec["dms"] = dms_state
+
+        if scout_alert is not None:
+            rec["scout"] = {
+                "type": getattr(scout_alert, "hazard_type", None),
+                "sev": getattr(scout_alert, "severity", None),
+                "spd": getattr(scout_alert, "recommended_speed_kmh", None),
+                "head": getattr(scout_alert, "headline", None),
+                "loc": getattr(scout_alert, "location", None),
+                "stale": getattr(scout_alert, "is_stale", False),
+            }
 
         self._write(rec)
         self.frames += 1

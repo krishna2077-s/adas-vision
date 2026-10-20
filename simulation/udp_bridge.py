@@ -242,6 +242,21 @@ def run_bridge(source, async_det: bool = False) -> None:
     except Exception as exc:
         logger.warning(f"Scene understanding disabled ({exc}).")
 
+    # ── Module 15: TinyFish Web Hazard Scout ────────────────────────────
+    tinyfish_scout = None
+    if getattr(cfg, "ENABLE_TINYFISH", False):
+        try:
+            from tinyfish_scout import TinyFishRoadScout
+            tinyfish_scout = TinyFishRoadScout(
+                api_key=getattr(cfg, "TINYFISH_API_KEY", ""),
+                location=getattr(cfg, "TINYFISH_LOCATION", "NH48 Delhi-Gurgaon"),
+                mock_mode=getattr(cfg, "TINYFISH_MOCK", False),
+            )
+            if tinyfish_scout.is_available():
+                tinyfish_scout.start_background_scout()
+        except Exception as exc:
+            logger.debug(f"TinyFish scout disabled ({exc}).")
+
     # ── UDP sockets ─────────────────────────────────────────────────────
     out_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     ego_listener = EgoListener(UDP_IN_PORT)
@@ -332,8 +347,15 @@ def run_bridge(source, async_det: bool = False) -> None:
             pass
 
         # ── Module 3: decision engine ───────────────────────────────────
-        decision = engine.process(lane_result, tracks, detection_age_s=detection_age)
+        scout_alert = tinyfish_scout.alert if tinyfish_scout is not None else None
+        decision = engine.process(lane_result, tracks, detection_age_s=detection_age,
+                                  scout_alert=scout_alert)
         annotated = engine.draw_hud(annotated, decision)
+        if tinyfish_scout is not None:
+            try:
+                annotated = tinyfish_scout.draw_chip(annotated)
+            except Exception:
+                pass
 
         # ── Module 10: FCW ──────────────────────────────────────────────
         if fcw:
@@ -371,6 +393,13 @@ def run_bridge(source, async_det: bool = False) -> None:
             "lane":        _serialise_lane(lane_result),
             "tracks":      _serialise_tracks(tracks),
             "ego_from_matlab": list(ego_pos) if ego_pos else None,
+            "scout": {
+                "hazard_type": getattr(scout_alert, "hazard_type", "CLEAR"),
+                "severity": getattr(scout_alert, "severity", "LOW"),
+                "headline": getattr(scout_alert, "headline", ""),
+                "recommended_safe_speed_kmh": getattr(scout_alert, "recommended_speed_kmh", 80),
+                "is_stale": getattr(scout_alert, "is_stale", False),
+            } if scout_alert is not None else None,
         }
         try:
             payload = json.dumps(packet).encode("utf-8")
@@ -395,6 +424,8 @@ def run_bridge(source, async_det: bool = False) -> None:
     cap.release()
     out_sock.close()
     ego_listener.stop()
+    if tinyfish_scout:
+        tinyfish_scout.stop_background_scout()
     if async_detector:
         async_detector.stop()
     cv2.destroyAllWindows()

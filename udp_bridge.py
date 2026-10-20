@@ -1,78 +1,78 @@
 """
-UDP Bridge for ADAS Vision
-==========================
+udp_bridge.py — ADAS Vision UDP Co-simulation Bridge
 
-This script acts as a UDP bridge, wrapping the existing ADAS Vision perception pipeline
-and streaming its outputs as JSON over UDP to a receiver (e.g., MATLAB/Simulink).
-It serves as the critical integration component for hackathon applications.
+Runs the full ADAS perception pipeline on a video source and continuously
+streams perception data (detections, lane, road, decisions, FPS) as JSON
+packets over UDP port 5005 to a connected MATLAB co-simulation client.
+
+Also listens on UDP port 5006 for ego-vehicle position feedback from MATLAB
+and overlays it on the video window.
 
 Usage:
-    python udp_bridge.py --video path/to/video.mp4 [options]
-    python udp_bridge.py --camera [options]
+    python udp_bridge.py --video dashcam.mp4 --async
+    python udp_bridge.py --camera
 
-Options:
-    --video PATH        Path to the input video file.
-    --camera            Use the primary camera as input.
-    --udp-host HOST     Destination UDP host (default: 127.0.0.1).
-    --udp-port PORT     Destination UDP port (default: 5005).
-    --listen-port PORT  Local UDP port to listen for ego pose updates (default: 5006).
-    --no-display        Run in headless mode, disabling cv2.imshow.
-    --async             Use the AsyncObjectDetector instead of the standard ObjectDetector.
-    --log               Enable drive logging (same as main.py).
+Protocol (outbound, port 5005):
+    One JSON object per processed frame, newline-terminated:
+    {
+        "frame_id":    <int>,
+        "timestamp_s": <float>,
+        "fps":         <float>,
+        "decision": {
+            "longitudinal": <str>,   # "PROCEED" | "CAUTION" | "SLOW" | "BRAKE" | "EMERGENCY_STOP"
+            "lateral":      <str>,   # "STRAIGHT" | "SLIGHT LEFT" | ...
+            "rule_id":      <str>,
+            "brake_demand": <float>, # 0.0 – 1.0
+            "reason":       <str>
+        },
+        "lane": {
+            "offset_px":     <int>,
+            "confidence":    <float>,
+            "steering":      <str>,
+            "left_lane":     <bool>,
+            "right_lane":    <bool>
+        },
+        "tracks": [
+            {
+                "track_id":   <int>,
+                "label":      <str>,
+                "confidence": <float>,
+                "distance_m": <float | null>,
+                "ttc_s":      <float | null>,
+                "in_path":    <bool>,
+                "risk":       <str>,   # "HIGH" | "MEDIUM" | "LOW"
+                "bbox":       [x1, y1, x2, y2]
+            }, ...
+        ],
+        "ego_from_matlab": <[x, y] | null>
+    }
+
+Protocol (inbound, port 5006):
+    JSON from MATLAB:  {"ego_x": <float>, "ego_y": <float>}
 """
 
-import cv2
-import json
-import time
-import socket
 import argparse
+import json
+import logging
+import socket
+import sys
 import threading
-import math
-from typing import Optional, Dict, Any
+import time
+from pathlib import Path
 
-# Required imports from existing pipeline
+import cv2
+
+import config as cfg
+from decision_engine import DecisionEngine
+from forward_collision_warning import ForwardCollisionWarning
+from frame_guard import is_valid_frame
 from lane_detection import LaneDetector
 from road_detection import RoadDetector
 from tracker import MultiObjectTracker
-from decision_engine import DecisionEngine
 
-try:
-    from forward_collision_warning import ForwardCollisionWarning
-except ImportError:
-    ForwardCollisionWarning = None
-
-from frame_guard import is_valid_frame
-
-# Conditional imports
-try:
-    from learned_road_detection import LearnedRoadDetector
-except ImportError:
-    LearnedRoadDetector = None
-
-try:
-    from object_detection import ObjectDetector
-except ImportError:
-    ObjectDetector = None
-
-try:
-    from async_detector import AsyncObjectDetector
-except ImportError:
-    AsyncObjectDetector = None
-
-try:
-    from traffic_light_state import TrafficLightReader
-except ImportError:
-    TrafficLightReader = None
-
-try:
-    from traffic_sign_recognition import SignRecognizer
-except ImportError:
-    SignRecognizer = None
-
-
-import config as cfg
-import logging
-
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)-8s | %(message)s",
@@ -80,358 +80,380 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
-def clean_floats(obj: Any) -> Any:
-    """Recursively clean floats (NaN, Inf) and numpy types for JSON serialization."""
-    if isinstance(obj, dict):
-        return {k: clean_floats(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [clean_floats(v) for v in obj]
-    elif isinstance(obj, float):
-        if math.isnan(obj) or math.isinf(obj):
-            return None
-        return obj
-    elif type(obj).__module__ == 'numpy':
-        # Convert numpy types to native Python types
-        if hasattr(obj, 'tolist'):
-            return clean_floats(obj.tolist())
-        elif hasattr(obj, 'item'):
-            return clean_floats(obj.item())
-    return obj
+# ---------------------------------------------------------------------------
+# UDP constants
+# ---------------------------------------------------------------------------
+UDP_OUT_HOST = "127.0.0.1"
+UDP_OUT_PORT = 5005          # Python -> MATLAB
+UDP_IN_PORT  = 5006          # MATLAB -> Python (ego position feedback)
+UDP_MAX_PKT  = 65000         # max UDP payload (bytes)
 
 
-class EgoPoseReceiver:
-    """Non-blocking UDP socket on a daemon thread for the ego pose receiver."""
-    def __init__(self, port: int):
-        self.port = port
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.sock.bind(('0.0.0.0', self.port))
-        self.sock.setblocking(False)
-        self.running = True
-        self.latest_pose: Dict[str, float] = {
-            "ego_x": 0.0,
-            "ego_y": 0.0,
-            "ego_yaw_rad": 0.0,
-            "ego_speed_mps": 0.0
-        }
-        self.thread = threading.Thread(target=self._listen, daemon=True)
-        self.thread.start()
+# ---------------------------------------------------------------------------
+# Ego-position listener (runs in a daemon thread)
+# ---------------------------------------------------------------------------
+class EgoListener:
+    """Listens for MATLAB ego-vehicle position updates on UDP port 5006."""
 
-    def _listen(self):
-        while self.running:
+    def __init__(self, port: int = UDP_IN_PORT):
+        self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._sock.bind(("0.0.0.0", port))
+        self._sock.settimeout(0.05)
+        self._pos = None          # latest (x, y) from MATLAB
+        self._lock = threading.Lock()
+        self._running = True
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+        logger.info(f"EgoListener started — receiving MATLAB feedback on UDP {port}.")
+
+    def _loop(self):
+        while self._running:
             try:
-                data, addr = self.sock.recvfrom(4096)
-                if data:
-                    pose = json.loads(data.decode('utf-8'))
-                    self.latest_pose.update(pose)
-            except BlockingIOError:
-                time.sleep(0.01)
-            except Exception as e:
-                print(f"Error receiving ego pose: {e}")
-                time.sleep(0.01)
+                data, _ = self._sock.recvfrom(4096)
+                obj = json.loads(data.decode("utf-8"))
+                with self._lock:
+                    self._pos = (float(obj.get("ego_x", 0.0)),
+                                 float(obj.get("ego_y", 0.0)))
+            except socket.timeout:
+                pass
+            except Exception as exc:
+                logger.debug(f"EgoListener error: {exc}")
+
+    def latest(self):
+        with self._lock:
+            return self._pos
 
     def stop(self):
-        self.running = False
-        self.sock.close()
+        self._running = False
+        self._sock.close()
 
 
-def main():
-    parser = argparse.ArgumentParser(description="ADAS Vision UDP Bridge")
-    parser.add_argument('--video', type=str, help="Path to video file")
-    parser.add_argument('--camera', action='store_true', help="Use camera")
-    parser.add_argument('--camera-index', type=int, default=cfg.CAMERA_INDEX,
-                        help="Webcam device index")
-    parser.add_argument('--udp-host', type=str, default='127.0.0.1',
-                        help="UDP destination host (default: 127.0.0.1)")
-    parser.add_argument('--udp-port', type=int, default=5005,
-                        help="UDP destination port (default: 5005)")
-    parser.add_argument('--listen-port', type=int, default=5006,
-                        help="UDP port for ego pose from Simulink (default: 5006)")
-    parser.add_argument('--no-display', action='store_true',
-                        help="Disable cv2.imshow (headless mode)")
-    parser.add_argument('--async', dest='async_mode', action='store_true',
-                        help="Run object detection on background thread (Module 14)")
-    parser.add_argument('--log', type=str, default=None, metavar='PATH',
-                        help="Record drive log (.jsonl)")
+# ---------------------------------------------------------------------------
+# Helper: serialise a track list
+# ---------------------------------------------------------------------------
+def _serialise_tracks(tracks):
+    out = []
+    if not tracks:
+        return out
+    for t in tracks:
+        out.append({
+            "track_id":   int(t.id),
+            "label":      str(t.label),
+            "confidence": round(float(t.confidence), 3),
+            "distance_m": round(float(t.smoothed_distance_m), 2) if t.smoothed_distance_m is not None else None,
+            "ttc_s":      round(float(t.ttc_s), 2)      if t.ttc_s      is not None else None,
+            "in_path":    bool(t.in_path),
+            "risk":       str(getattr(t, "risk", "LOW")),
+            "bbox":       [int(t.bbox[0]), int(t.bbox[1]),
+                           int(t.bbox[2]), int(t.bbox[3])],
+        })
+    return out
 
-    args = parser.parse_args()
 
-    if not args.video and not args.camera:
-        print("Error: Must specify --video PATH or --camera")
-        return
+# ---------------------------------------------------------------------------
+# Helper: serialise a lane result
+# ---------------------------------------------------------------------------
+def _serialise_lane(lane_result):
+    if lane_result is None:
+        return {"offset_px": 0, "confidence": 0.0,
+                "steering": "UNKNOWN", "left_lane": False, "right_lane": False}
+    return {
+        "offset_px":  int(lane_result.offset_px),
+        "confidence": round(float(lane_result.confidence), 2),
+        "steering":   str(lane_result.steering),
+        "left_lane":  lane_result.left_lane  is not None,
+        "right_lane": lane_result.right_lane is not None,
+    }
 
-    source = args.camera_index if args.camera else args.video
 
-    # ── Open video source ──────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Helper: serialise a decision
+# ---------------------------------------------------------------------------
+def _serialise_decision(decision):
+    return {
+        "longitudinal": str(decision.longitudinal),
+        "lateral":      str(decision.lateral),
+        "rule_id":      str(decision.rule_id),
+        "brake_demand": round(float(getattr(decision, "brake_demand", 0.0)), 3),
+        "reason":       str(decision.reason),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Main bridge loop
+# ---------------------------------------------------------------------------
+def run_bridge(source, async_det: bool = False) -> None:
+    if async_det:
+        cfg.ENABLE_ASYNC_DETECTION = True
+
+    # ── Open video source ───────────────────────────────────────────────
     cap = cv2.VideoCapture(source)
     if not cap.isOpened():
         logger.error(f"Cannot open source: {source}")
-        return
+        sys.exit(1)
 
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps_src = cap.get(cv2.CAP_PROP_FPS) or cfg.TARGET_FPS
     logger.info(f"Source opened: {w}x{h} @ {fps_src:.1f} FPS")
 
-    # ── Initialise modules (mirrors main.py exactly) ───────────────────
+    # ── Perception modules ──────────────────────────────────────────────
     lane_detector = LaneDetector(frame_width=w, frame_height=h)
 
     road_detector = (RoadDetector(frame_width=w, frame_height=h)
                      if cfg.ENABLE_ROAD_FALLBACK else None)
 
     learned_road_detector = None
-    if cfg.ENABLE_LEARNED_ROAD and LearnedRoadDetector is not None:
+    if cfg.ENABLE_LEARNED_ROAD:
         try:
+            from learned_road_detection import LearnedRoadDetector
             lrd = LearnedRoadDetector(frame_width=w, frame_height=h)
             learned_road_detector = lrd if lrd.available else None
-        except Exception as exc:
-            logger.warning(f"Learned road detection unavailable ({exc})")
+        except ImportError as exc:
+            logger.warning(f"Learned road detection unavailable ({exc}).")
 
     object_detector = None
-    async_detector = None
-    if args.async_mode and AsyncObjectDetector is not None:
-        async_detector = AsyncObjectDetector(w, h)
-        logger.info("Object detection: ASYNC (Module 14)")
-    elif ObjectDetector is not None:
-        object_detector = ObjectDetector(frame_width=w, frame_height=h)
-        logger.info("Object detection: SYNC")
+    async_detector  = None
+    try:
+        if cfg.ENABLE_ASYNC_DETECTION:
+            from async_detector import AsyncObjectDetector
+            async_detector = AsyncObjectDetector(w, h)
+            logger.info("Object detection: ASYNC worker thread.")
+        else:
+            from object_detection import ObjectDetector
+            object_detector = ObjectDetector(frame_width=w, frame_height=h)
+    except ImportError as exc:
+        logger.warning(f"Object detection disabled: {exc}")
 
     tracker = MultiObjectTracker()
-    engine = DecisionEngine(frame_width=w, frame_height=h)
-    fcw = ForwardCollisionWarning(w, h) if ForwardCollisionWarning else None
+    engine  = DecisionEngine(frame_width=w, frame_height=h)
+    fcw     = ForwardCollisionWarning(w, h) if cfg.ENABLE_FCW else None
 
-    traffic_light_reader = None
-    sign_recognizer = None
+    traffic_light_reader = sign_recognizer = None
     try:
-        if cfg.ENABLE_TRAFFIC_LIGHT and TrafficLightReader is not None:
+        if cfg.ENABLE_TRAFFIC_LIGHT:
+            from traffic_light_state import TrafficLightReader
             traffic_light_reader = TrafficLightReader()
-        if cfg.ENABLE_SIGN_RECOGNITION and SignRecognizer is not None:
+        if cfg.ENABLE_SIGN_RECOGNITION:
+            from traffic_sign_recognition import SignRecognizer
             sr = SignRecognizer(w, h)
             sign_recognizer = sr if sr.available else None
     except Exception as exc:
-        logger.warning(f"Scene understanding disabled ({exc})")
+        logger.warning(f"Scene understanding disabled ({exc}).")
 
-    # ── Drive logger (opt-in) ──────────────────────────────────────────
-    drive_logger = None
-    if args.log:
+    # ── Module 15: TinyFish Web Hazard Scout ────────────────────────────
+    tinyfish_scout = None
+    if getattr(cfg, "ENABLE_TINYFISH", False):
         try:
-            from drive_logger import DriveLogger
-            drive_logger = DriveLogger(args.log, source, w, h, fps_src)
+            from tinyfish_scout import TinyFishRoadScout
+            tinyfish_scout = TinyFishRoadScout(
+                api_key=getattr(cfg, "TINYFISH_API_KEY", ""),
+                location=getattr(cfg, "TINYFISH_LOCATION", "NH48 Delhi-Gurgaon"),
+                mock_mode=getattr(cfg, "TINYFISH_MOCK", False),
+            )
+            if tinyfish_scout.is_available():
+                tinyfish_scout.start_background_scout()
         except Exception as exc:
-            logger.warning(f"Drive logger disabled ({exc})")
+            logger.debug(f"TinyFish scout disabled ({exc}).")
 
-    # ── UDP setup ──────────────────────────────────────────────────────
-    udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    dest_addr = (args.udp_host, args.udp_port)
-    ego_receiver = EgoPoseReceiver(args.listen_port)
-    logger.info(f"UDP Bridge: sending to {args.udp_host}:{args.udp_port}, "
-                f"listening for ego pose on port {args.listen_port}")
+    # ── UDP sockets ─────────────────────────────────────────────────────
+    out_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    ego_listener = EgoListener(UDP_IN_PORT)
 
-    # ── Main loop ──────────────────────────────────────────────────────
-    frame_no = 0
+    logger.info(f"UDP bridge streaming on {UDP_OUT_HOST}:{UDP_OUT_PORT}  "
+                f"| ego feedback on :{UDP_IN_PORT}")
+    logger.info("Starting. Press Q to quit.")
+
+    # ── Main loop ───────────────────────────────────────────────────────
+    frame_no   = 0
+    bad_frames = 0
     last_status = None
+    last_fcw_level = 0
+    start_time = time.monotonic()
+    window_name = "ADAS UDP Bridge  (Q quit)"
 
-    try:
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                if isinstance(source, str):
-                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                    engine.reset()
-                    tracker.reset()
-                    if road_detector:
-                        road_detector.reset()
-                    if learned_road_detector:
-                        learned_road_detector.reset()
-                    if async_detector:
-                        async_detector.reset()
-                    frame_no = 0
-                    continue
-                break
-
-            if not is_valid_frame(frame):
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            if isinstance(source, str):
+                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                engine.reset()
+                tracker.reset()
+                if road_detector:         road_detector.reset()
+                if learned_road_detector: learned_road_detector.reset()
+                if async_detector:        async_detector.reset()
+                frame_no = 0
+                start_time = time.monotonic()
                 continue
+            logger.error("Camera read failed.")
+            break
 
-            t0 = time.time()
-            annotated = frame
-            lane_result = None
-            obj_result = None
-            tracks = None
-            lane_center_x = None
-            detection_age = 0.0
-            is_new = True
+        if not is_valid_frame(frame):
+            bad_frames += 1
+            if bad_frames > 300:
+                logger.error("Too many consecutive malformed frames — stopping.")
+                break
+            continue
+        bad_frames = 0
 
-            # ── Module 1: lanes → 1c: learned road → 1b: classical ────
-            lane_result, annotated = lane_detector.process(annotated)
-            road_source = "PAINTED_LANE"
-            if lane_result.confidence == 0.0:
-                got = False
-                if learned_road_detector is not None:
-                    road_result, annotated = learned_road_detector.process(
-                        frame, draw_on=annotated)
-                    if road_result.confidence > 0.0:
-                        lane_result = road_result
-                        road_source = "LEARNED_ROAD"
-                        got = True
-                if not got and road_detector is not None:
-                    road_result, annotated = road_detector.process(
-                        frame, draw_on=annotated)
-                    if road_result.confidence > 0.0:
-                        lane_result = road_result
-                        road_source = "CLASSICAL_ROAD"
-            lane_center_x = lane_result.lane_center_x
+        annotated = frame.copy()
+        lane_result = obj_result = tracks = None
+        lane_center_x = None
+        detection_age = 0.0
+        is_new = True
 
-            # ── Module 2: objects (sync or async) ──────────────────────
-            if object_detector is not None:
-                obj_result, annotated = object_detector.process(
-                    annotated, lane_center_x)
-            elif async_detector is not None:
-                async_detector.submit(frame, lane_center_x)
-                obj_result, det_age, is_new = async_detector.latest()
-                detection_age = det_age or 0.0
-                if obj_result is not None:
-                    annotated = async_detector.annotate(annotated, obj_result)
+        # ── Module 1: lane detection ────────────────────────────────────
+        lane_result, annotated = lane_detector.process(annotated)
+        if lane_result.confidence == 0.0:
+            got = False
+            if learned_road_detector is not None:
+                road_res, annotated = learned_road_detector.process(frame, draw_on=annotated)
+                if road_res.confidence > 0.0:
+                    lane_result, got = road_res, True
+            if not got and road_detector is not None:
+                road_res, annotated = road_detector.process(frame, draw_on=annotated)
+                if road_res.confidence > 0.0:
+                    lane_result = road_res
+        lane_center_x = lane_result.lane_center_x
 
-            # ── Module 4: tracker ──────────────────────────────────────
-            if async_detector is not None:
-                dets = (obj_result.detections
-                        if (obj_result is not None and is_new) else [])
-            else:
-                dets = obj_result.detections if obj_result else []
-            tracks = tracker.update(dets)
-            annotated = tracker.annotate(annotated, tracks)
+        # ── Module 2: object detection ──────────────────────────────────
+        if object_detector is not None:
+            obj_result, annotated = object_detector.process(annotated, lane_center_x)
+        elif async_detector is not None:
+            async_detector.submit(frame, lane_center_x)
+            obj_result, det_age, is_new = async_detector.latest()
+            detection_age = det_age or 0.0
+            if obj_result is not None:
+                annotated = async_detector.annotate(annotated, obj_result)
 
-            # ── Module 11: traffic lights & signs ──────────────────────
-            speed_limit_mps = None
-            red_light = False
+        # ── Module 4: tracker ───────────────────────────────────────────
+        if async_detector is not None:
+            dets = obj_result.detections if (obj_result and is_new) else []
+        else:
+            dets = obj_result.detections if obj_result else []
+        tracks = tracker.update(dets)
+        annotated = tracker.annotate(annotated, tracks)
+
+        # ── Module 11: traffic lights + signs ───────────────────────────
+        try:
+            if traffic_light_reader and obj_result:
+                lights = traffic_light_reader.read(frame, obj_result.detections)
+                annotated = traffic_light_reader.draw(annotated, lights)
+            if sign_recognizer:
+                sign_res = sign_recognizer.process(frame)
+                annotated = sign_recognizer.draw(annotated, sign_res)
+        except Exception:
+            pass
+
+        # ── Module 3: decision engine ───────────────────────────────────
+        scout_alert = tinyfish_scout.alert if tinyfish_scout is not None else None
+        decision = engine.process(lane_result, tracks, detection_age_s=detection_age,
+                                  scout_alert=scout_alert)
+        annotated = engine.draw_hud(annotated, decision)
+        if tinyfish_scout is not None:
             try:
-                if traffic_light_reader and obj_result:
-                    lights = traffic_light_reader.read(
-                        frame, obj_result.detections)
-                    annotated = traffic_light_reader.draw(annotated, lights)
-                    red_light = traffic_light_reader.controlling_state in (
-                        "RED", "AMBER")
-                if sign_recognizer:
-                    sign_res = sign_recognizer.process(frame)
-                    annotated = sign_recognizer.draw(annotated, sign_res)
-                    if sign_res.speed_limit_kmh is not None:
-                        speed_limit_mps = sign_res.speed_limit_kmh / 3.6
+                annotated = tinyfish_scout.draw_chip(annotated)
             except Exception:
                 pass
 
-            # ── Module 3: decision engine ──────────────────────────────
-            decision = engine.process(lane_result, tracks,
-                                      detection_age_s=detection_age)
-            annotated = engine.draw_hud(annotated, decision)
-
-            # ── Module 10: FCW ─────────────────────────────────────────
-            fcw_state = None
-            if fcw:
-                try:
-                    fcw_state = fcw.process(decision, tracks)
-                    annotated = fcw.draw(annotated, fcw_state, tracks)
-                except Exception:
-                    pass
-
-            t1 = time.time()
-            fps = 1.0 / max(t1 - t0, 1e-6)
-
-            # ── Build & send UDP JSON packet ───────────────────────────
-            track_list = []
-            for t in (tracks or []):
-                if not t.confirmed:
-                    continue
-                track_list.append({
-                    "track_id": t.id,
-                    "class": t.label,
-                    "bbox": [int(t.x1), int(t.y1), int(t.x2), int(t.y2)],
-                    "distance_m": t.smoothed_distance_m,
-                    "closing_speed_mps": t.closing_speed_mps,
-                    "ttc_s": t.ttc_s,
-                    "in_path": t.in_path,
-                    "confidence": t.confidence,
-                    "risk": t.risk,
-                    "confirmed": t.confirmed
-                })
-
-            road_dict = {
-                "center_x": lane_result.lane_center_x,
-                "offset_px": lane_result.offset_px,
-                "confidence": lane_result.confidence,
-                "steering": lane_result.steering,
-                "source": road_source
-            }
-
-            decision_dict = {
-                "longitudinal": decision.longitudinal,
-                "longitudinal_level": decision.longitudinal_level,
-                "lateral": decision.lateral,
-                "throttle": decision.throttle,
-                "brake": decision.brake,
-                "rule_id": decision.rule_id,
-                "reason": decision.reason,
-                "degraded": decision.degraded,
-                "hazard_label": decision.hazard_label,
-                "hazard_id": decision.hazard_id,
-                "hazard_distance_m": decision.smoothed_distance_m,
-                "hazard_ttc_s": decision.ttc_s,
-                "hazard_side": decision.hazard_side
-            }
-
-            packet = {
-                "timestamp_ms": int(time.time() * 1000),
-                "frame_id": frame_no,
-                "tracks": track_list,
-                "road_boundary": road_dict,
-                "decision": decision_dict,
-                "traffic_light": (traffic_light_reader.controlling_state
-                                  if traffic_light_reader else None),
-                "speed_limit_kmh": (round(speed_limit_mps * 3.6)
-                                    if speed_limit_mps else None),
-                "fps": round(fps, 1),
-                "ego_pose": ego_receiver.latest_pose
-            }
-
+        # ── Module 10: FCW ──────────────────────────────────────────────
+        if fcw:
             try:
-                payload = json.dumps(clean_floats(packet)).encode('utf-8')
-                udp_sock.sendto(payload, dest_addr)
-            except Exception as e:
-                logger.debug(f"UDP send failed: {e}")
+                fcw_state = fcw.process(decision, tracks)
+                annotated = fcw.draw(annotated, fcw_state, tracks)
+                last_fcw_level = fcw_state.level
+            except Exception:
+                pass
 
-            # ── Terminal log on decision change ────────────────────────
-            status = (decision.longitudinal, decision.lateral, decision.rule_id)
-            if status != last_status:
-                logger.info(decision.reason)
-                last_status = status
+        # ── Log decision changes ────────────────────────────────────────
+        status = (decision.longitudinal, decision.lateral, decision.rule_id)
+        if status != last_status:
+            logger.info(decision.reason)
+            last_status = status
 
-            # ── Drive logger ───────────────────────────────────────────
-            if drive_logger:
-                try:
-                    drive_logger.log(frame_no, decision, tracks, fcw=fcw_state)
-                except Exception:
-                    pass
+        # ── Compute FPS ─────────────────────────────────────────────────
+        elapsed = time.monotonic() - start_time
+        fps_live = frame_no / elapsed if elapsed > 0 else 0.0
 
-            # ── Display ────────────────────────────────────────────────
-            if not args.no_display:
-                cv2.imshow("ADAS Vision UDP Bridge  (Q quit)", annotated)
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    break
+        # ── Overlay ego vehicle position from MATLAB ────────────────────
+        ego_pos = ego_listener.latest()
+        if ego_pos is not None:
+            cv2.putText(annotated,
+                        f"EGO MATLAB: ({ego_pos[0]:.1f}, {ego_pos[1]:.1f}) m",
+                        (10, h - 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
+                        (255, 180, 0), 2, cv2.LINE_AA)
 
-            frame_no += 1
+        # ── Build and send UDP packet ───────────────────────────────────
+        packet = {
+            "frame_id":    frame_no,
+            "timestamp_s": round(elapsed, 4),
+            "fps":         round(fps_live, 1),
+            "decision":    _serialise_decision(decision),
+            "lane":        _serialise_lane(lane_result),
+            "tracks":      _serialise_tracks(tracks),
+            "ego_from_matlab": list(ego_pos) if ego_pos else None,
+            "scout": {
+                "hazard_type": getattr(scout_alert, "hazard_type", "CLEAR"),
+                "severity": getattr(scout_alert, "severity", "LOW"),
+                "headline": getattr(scout_alert, "headline", ""),
+                "recommended_safe_speed_kmh": getattr(scout_alert, "recommended_speed_kmh", 80),
+                "is_stale": getattr(scout_alert, "is_stale", False),
+            } if scout_alert is not None else None,
+        }
+        try:
+            payload = json.dumps(packet).encode("utf-8")
+            if len(payload) <= UDP_MAX_PKT:
+                out_sock.sendto(payload, (UDP_OUT_HOST, UDP_OUT_PORT))
+            else:
+                # Trim tracks list if packet is too large
+                packet["tracks"] = packet["tracks"][:10]
+                out_sock.sendto(json.dumps(packet).encode("utf-8"),
+                                (UDP_OUT_HOST, UDP_OUT_PORT))
+        except Exception as exc:
+            logger.debug(f"UDP send error: {exc}")
 
-    except KeyboardInterrupt:
-        logger.info("Interrupted by user.")
-    finally:
-        cap.release()
-        if async_detector:
-            async_detector.stop()
-        if drive_logger:
-            drive_logger.close()
-        ego_receiver.stop()
-        udp_sock.close()
-        cv2.destroyAllWindows()
-        logger.info("UDP Bridge shutdown complete.")
+        cv2.imshow(window_name, annotated)
+        if (cv2.waitKey(1) & 0xFF) == ord("q"):
+            logger.info("Quit.")
+            break
+
+        frame_no += 1
+
+    # ── Cleanup ─────────────────────────────────────────────────────────
+    cap.release()
+    out_sock.close()
+    ego_listener.stop()
+    if tinyfish_scout:
+        tinyfish_scout.stop_background_scout()
+    if async_detector:
+        async_detector.stop()
+    cv2.destroyAllWindows()
+    logger.info(f"Bridge stopped. Processed {frame_no} frames.")
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+def _parse_args():
+    p = argparse.ArgumentParser(
+        description="ADAS Vision UDP Co-simulation Bridge",
+    )
+    src = p.add_mutually_exclusive_group(required=True)
+    src.add_argument("--video",  type=str, metavar="PATH",
+                     help="Path to a video file.")
+    src.add_argument("--camera", action="store_true",
+                     help="Use webcam as input.")
+    p.add_argument("--camera-index", type=int, default=cfg.CAMERA_INDEX,
+                   help=f"Webcam device index (default: {cfg.CAMERA_INDEX}).")
+    p.add_argument("--async", dest="async_det", action="store_true",
+                   help="Run object detection on a background thread.")
+    p.add_argument("--out-port", type=int, default=UDP_OUT_PORT,
+                   help=f"UDP port to stream perception data (default: {UDP_OUT_PORT}).")
+    return p.parse_args()
 
 
 if __name__ == "__main__":
-    main()
+    args = _parse_args()
+    source = args.camera_index if args.camera else args.video
+    run_bridge(source, async_det=args.async_det)

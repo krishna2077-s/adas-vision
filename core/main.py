@@ -207,6 +207,9 @@ def run(
                 api_key=getattr(cfg, "TINYFISH_API_KEY", ""),
                 location=getattr(cfg, "TINYFISH_LOCATION", "NH48 Delhi-Gurgaon"),
                 poll_interval_s=getattr(cfg, "TINYFISH_POLL_INTERVAL_S", 60.0),
+                heading=getattr(cfg, "TINYFISH_HEADING", None),
+                km_marker=getattr(cfg, "TINYFISH_KM", None),
+                mock_mode=getattr(cfg, "TINYFISH_MOCK", False),
             )
             if tinyfish_scout.is_available():
                 tinyfish_scout.start_background_scout()
@@ -416,7 +419,8 @@ def run(
                     ego_spd = controller.sim_speed if controller is not None else None
                     plan = planner.process(ego_objs, lane_result, ego_spd,
                                            speed_limit_mps=speed_limit_mps,
-                                           red_light=red_light)
+                                           red_light=red_light,
+                                           scout_hazard=tinyfish_scout.alert if tinyfish_scout else None)
                     annotated = planner.draw_overlay(annotated, plan)
                     
                 if controller is not None:
@@ -469,7 +473,8 @@ def run(
                         speed_limit_kmh=(round(speed_limit_mps * 3.6)
                                          if speed_limit_mps else None),
                         plan=plan, control=cmd,
-                        dms_state=(dms_result.state if dms_result is not None else None))
+                        dms_state=(dms_result.state if dms_result is not None else None),
+                        scout_alert=(tinyfish_scout.alert if tinyfish_scout is not None else None))
                 except Exception as exc:
                     logger.debug(f"drive log skipped: {exc}")
 
@@ -574,6 +579,12 @@ Examples
                    help="Enable TinyFish AI live route hazard scout (Module 15).")
     p.add_argument("--tinyfish-location", type=str, default=getattr(cfg, "TINYFISH_LOCATION", "NH48 Delhi-Gurgaon"),
                    help="Location/route to scout via TinyFish.")
+    p.add_argument("--tinyfish-heading", type=str, default=None,
+                   help="Forward heading for corridor-scoped queries (e.g. Southbound / Jaipur).")
+    p.add_argument("--tinyfish-km", type=float, default=None,
+                   help="Starting kilometer marker for road progression.")
+    p.add_argument("--tinyfish-mock", action="store_true",
+                   help="Force offline mock mode for TinyFish scout.")
 
     return p.parse_args()
 
@@ -588,6 +599,12 @@ if __name__ == "__main__":
         cfg.ENABLE_TINYFISH = True
     if args.tinyfish_location:
         cfg.TINYFISH_LOCATION = args.tinyfish_location
+    if args.tinyfish_heading:
+        cfg.TINYFISH_HEADING = args.tinyfish_heading
+    if args.tinyfish_km is not None:
+        cfg.TINYFISH_KM = args.tinyfish_km
+    if args.tinyfish_mock:
+        cfg.TINYFISH_MOCK = True
         
     source = args.camera_index if args.camera else args.video
     run(

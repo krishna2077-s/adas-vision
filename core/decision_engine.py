@@ -198,7 +198,7 @@ class DecisionEngine:
 
         # ── Policy table -> raw longitudinal level ────────────────────
         raw_level, rule_id, reason_core = self._evaluate_rules(
-            hazard, degraded, confirmed, highest_risk
+            hazard, degraded, confirmed, highest_risk, scout_alert=scout_alert
         )
 
         # ── Temporal ratchet: raw -> committed ────────────────────────
@@ -277,7 +277,12 @@ class DecisionEngine:
             hdesc = getattr(scout_alert, "headline", "")
             rec_spd = getattr(scout_alert, "recommended_speed_kmh", None)
 
-            target_floor = SLOW if (sev == "HIGH" or (rec_spd is not None and rec_spd <= 45)) else CAUTION
+            is_stale = getattr(scout_alert, "is_stale", False)
+            if is_stale:
+                target_floor = CAUTION
+                hdesc = f"{hdesc} (STALE ADVISORY)"
+            else:
+                target_floor = SLOW if (sev == "HIGH" or (rec_spd is not None and rec_spd <= 45)) else CAUTION
             if committed < target_floor:
                 committed = target_floor
                 floored = True
@@ -418,7 +423,7 @@ class DecisionEngine:
     # Policy table  (ordered, first-match-wins -> raw longitudinal level)
     # ------------------------------------------------------------------
 
-    def _evaluate_rules(self, hazard, degraded, tracks, highest_risk) -> Tuple[int, str, str]:
+    def _evaluate_rules(self, hazard, degraded, tracks, highest_risk, scout_alert=None) -> Tuple[int, str, str]:
         # ── Rules needing the nearest actionable hazard (R1..R3) ──────
         if hazard is not None:
             d = hazard.smoothed_distance_m
@@ -430,6 +435,8 @@ class DecisionEngine:
             if label in cfg.VULNERABLE_CLASSES:
                 ttc_margin += cfg.VULNERABLE_TTC_MARGIN_S
             ttc_emerg  = cfg.TTC_EMERGENCY_S + ttc_margin
+            if scout_alert is not None and not getattr(scout_alert, "is_stale", False) and getattr(scout_alert, "severity", "") == "HIGH":
+                ttc_margin += 0.5  # scout high-severity adverse condition margin
             ttc_brake  = cfg.TTC_BRAKE_S     + ttc_margin
 
             # R1 — EMERGENCY_STOP
@@ -477,6 +484,10 @@ class DecisionEngine:
                 return CAUTION, "R6", f"[R6] CAUTION: {hazard.label} #{hazard.id} closing gently, TTC {hazard.ttc_s:.1f}s"
         if highest_risk in ("MEDIUM", "HIGH"):
             return CAUTION, "R6", f"[R6] CAUTION: {highest_risk.lower()}-risk object nearby"
+
+        if scout_alert is not None and not getattr(scout_alert, "is_stale", False) and getattr(scout_alert, "severity", "") == "HIGH":
+            htype = getattr(scout_alert, "hazard_type", "HAZARD")
+            return CAUTION, "R6", f"[R6] CAUTION: Scout hazard [{htype}] {getattr(scout_alert, 'headline', '')}"
 
         # ── R7 — PROCEED (default) ────────────────────────────────────
         return PROCEED, "R7", "[R7] PROCEED: path clear"

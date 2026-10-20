@@ -40,6 +40,13 @@ except Exception as _exc:          # ultralytics missing, etc.
     _HAS_OBJ = False
     print("object detection unavailable:", _exc)
 
+try:
+    from tinyfish_scout import TinyFishRoadScout, RoadHazardAlert
+    _HAS_TINYFISH = True
+except Exception as _exc:
+    _HAS_TINYFISH = False
+    print("tinyfish scout unavailable:", _exc)
+
 VIDEO = "dashcam.mp4"
 _MEAN = np.array([0.485, 0.456, 0.406], np.float32)
 _STD = np.array([0.229, 0.224, 0.225], np.float32)
@@ -97,6 +104,17 @@ def explore(frame_idx, show_objects):
     else:
         n_obj = "off"
 
+    scout_str = "off"
+    if _HAS_TINYFISH:
+        try:
+            scout = TinyFishRoadScout(location="NH48 Delhi-Gurgaon", mock_mode=True)
+            annotated = scout.draw_chip(annotated)
+            al = scout.alert
+            if al:
+                scout_str = f"{al.hazard_type} [{al.severity}] | Cap: {al.recommended_speed_kmh} km/h"
+        except Exception:
+            pass
+
     diag = (
         f"Frame          : {int(frame_idx)} / {N_FRAMES - 1}\n"
         f"Guidance source: {source}\n"
@@ -105,6 +123,7 @@ def explore(frame_idx, show_objects):
         f"Lane center x  : {lane_result.lane_center_x}\n"
         f"Offset (px)    : {lane_result.offset_px}\n"
         f"Objects        : {n_obj}\n"
+        f"TinyFish Scout : {scout_str}\n"
         f"Learned model  : {'loaded' if _learned.available else 'MISSING (.pth not found)'}"
     )
     return cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB), diag
@@ -129,6 +148,40 @@ def segment_image(img_rgb):
     vis = cv2.addWeighted(frame, 1.0, fill, 0.45, 0)
     cov = float((mask > 0).mean())
     return cv2.cvtColor(vis, cv2.COLOR_BGR2RGB), f"Drivable-area coverage: {cov * 100:.1f}%"
+
+
+def scout_ui(location, heading, km_marker, tier):
+    """Interactively query TinyFish AI Scout and preview the HUD badge."""
+    if not _HAS_TINYFISH:
+        return None, {}, "TinyFish Scout module not available."
+    is_deep = "Deep" in tier
+    heading_val = None if heading == "Not specified" else heading
+    scout = TinyFishRoadScout(
+        location=location,
+        heading=heading_val,
+        km_marker=float(km_marker) if km_marker is not None else None,
+        mock_mode=not bool(os.environ.get("TINYFISH_API_KEY")),
+    )
+    alerts = scout.scout_hazards(location, deep_agent=is_deep, force_refresh=True)
+    alert = alerts[0] if alerts else None
+
+    # Render HUD badge on sample 720p highway canvas
+    canvas = np.zeros((720, 1280, 3), dtype=np.uint8)
+    canvas[:] = (35, 30, 28)
+    cv2.putText(canvas, f"ROUTE: {location}  |  HEADING: {heading}  |  KM: {km_marker}",
+                (20, 700), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1, cv2.LINE_AA)
+    annotated = scout.draw_chip(canvas)
+
+    payload = alert.to_dict() if alert else {}
+    summary = (
+        f"Hazard Type  : {alert.hazard_type}\n"
+        f"Severity     : {alert.severity}\n"
+        f"Safe Speed   : {alert.recommended_speed_kmh} km/h (Capped in Planner & Decision Engine)\n"
+        f"Headline     : {alert.headline}\n"
+        f"Source       : {alert.source}\n"
+        f"Freshness    : {'STALE (>300s)' if alert.is_stale else 'FRESH (Live Scout Cache)'}"
+    ) if alert else "No active hazards found."
+    return cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB), payload, summary
 
 
 with gr.Blocks(title="ADAS Vision — debug") as demo:
@@ -159,6 +212,45 @@ with gr.Blocks(title="ADAS Vision — debug") as demo:
             up_out = gr.Image(label="Learned drivable area")
         up_txt = gr.Textbox(label="Info", lines=1)
         up_in.change(segment_image, up_in, [up_out, up_txt])
+
+    with gr.Tab("TinyFish AI Route Scout (Module 15)"):
+        gr.Markdown(
+            "### Live Environmental & Route Hazard Scout (Module 15)\n"
+            "Powered by **TinyFish AI**. Multi-tier scouting: Free Search Gateway (Tier 1), "
+            "Fetch Markdown Parser (Tier 1.5), and Autonomous Browser Agent (Tier 2).\n"
+            "_Feeds closed-loop speed caps directly into the prediction planner and decision engine._"
+        )
+        with gr.Row():
+            with gr.Column(scale=1):
+                tf_loc = gr.Dropdown(
+                    choices=[
+                        "NH48 Delhi-Gurgaon Expressway",
+                        "Mumbai-Pune Expressway",
+                        "Outer Ring Road Bengaluru",
+                        "NH44 Panipat Stretch",
+                        "Yamuna Expressway",
+                    ],
+                    value="NH48 Delhi-Gurgaon Expressway",
+                    label="Corridor / Location",
+                )
+                tf_heading = gr.Dropdown(
+                    choices=["Southbound", "Northbound", "Eastbound", "Westbound", "Not specified"],
+                    value="Southbound",
+                    label="Corridor Heading",
+                )
+                tf_km = gr.Number(value=24.0, label="Kilometer Marker (KM)")
+                tf_tier = gr.Radio(
+                    choices=["Fast Search Gateway (Free, 0 credits)", "Deep Browser Agent ($0.016/step)"],
+                    value="Fast Search Gateway (Free, 0 credits)",
+                    label="Scouting Tier",
+                )
+                tf_btn = gr.Button("Scout Corridor Hazards", variant="primary")
+            with gr.Column(scale=2):
+                tf_preview = gr.Image(label="HUD Advisory Badge Preview")
+                tf_json = gr.JSON(label="Structured RoadHazardAlert Payload")
+                tf_status = gr.Textbox(label="Scout Summary & Advisory Speed", lines=6)
+
+        tf_btn.click(scout_ui, [tf_loc, tf_heading, tf_km, tf_tier], [tf_preview, tf_json, tf_status])
 
 
 if __name__ == "__main__":

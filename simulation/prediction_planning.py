@@ -82,7 +82,8 @@ class Planner:
     def process(self, ego_objs: List[EgoObject], lane_result,
                 ego_speed: Optional[float] = None,
                 speed_limit_mps: Optional[float] = None,
-                red_light: bool = False) -> PlanResult:
+                red_light: bool = False,
+                scout_hazard=None) -> PlanResult:
         ego_speed = cfg.PLAN_CRUISE_MPS if ego_speed is None else ego_speed
         preds = self._predict(ego_objs)
 
@@ -113,6 +114,19 @@ class Planner:
             target = min(target, eased)
             reason = ("RED light ahead -- easing" if reason == "cruise"
                       else f"RED light ahead -- easing; {reason}")
+
+        # ── Module 15: TinyFish Scout route advisory speed capping ────────────
+        # If an external environmental hazard (fog, waterlogging, accident) is scouted,
+        # cap the advisory cruise target speed accordingly.
+        if scout_hazard is not None and not getattr(scout_hazard, "is_stale", False):
+            scout_spd_kmh = getattr(scout_hazard, "recommended_speed_kmh", None)
+            if scout_spd_kmh is not None and scout_spd_kmh > 0:
+                scout_mps = scout_spd_kmh / 3.6
+                if target > scout_mps:
+                    target = scout_mps
+                    htype = getattr(scout_hazard, "hazard_type", "HAZARD")
+                    note = f"scout {htype} cap {scout_spd_kmh:.0f} km/h"
+                    reason = note if reason == "cruise" else f"{reason}; {note}"
 
         return PlanResult(
             target_speed_mps=target, predictions=preds,

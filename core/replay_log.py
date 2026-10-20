@@ -109,6 +109,25 @@ def render(base, rec, w, h):
         cv2.putText(base, f"LIMIT {rec['limit']}", (14, y), cv2.FONT_HERSHEY_SIMPLEX,
                     0.55, (0, 0, 220), 2, cv2.LINE_AA)
 
+    # TinyFish Scout badge (top-right, below decision)
+    scout = rec.get("scout")
+    if scout:
+        htype = scout.get("type", "HAZARD")
+        sev = scout.get("sev", "MED")
+        spd = scout.get("spd")
+        stale_tag = " [STALE]" if scout.get("stale") else ""
+        col = (20, 20, 180) if sev == "HIGH" else ((15, 120, 210) if sev == "MEDIUM" else (30, 110, 40))
+        if scout.get("stale"):
+            col = (60, 60, 60)
+        sx = max(10, w - 340)
+        sy = 92
+        cv2.rectangle(base, (sx, sy), (sx + 330, sy + 42), col, -1)
+        cv2.putText(base, f"TINYFISH: {htype} [{sev}]{stale_tag}", (sx + 8, sy + 18),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
+        spd_txt = f"MAX {spd} km/h" if spd else "CAUTION"
+        cv2.putText(base, f"{scout.get('head','')[:22]} | {spd_txt}", (sx + 8, sy + 34),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, (230, 230, 230), 1, cv2.LINE_AA)
+
     # plan / sim-speed line (bottom)
     plan = rec.get("plan")
     if plan:
@@ -161,7 +180,15 @@ def summarise(header, frames, footer):
     print(f"\nFCW warn/imminent frames: {dict(fcw_events) or 'none'}")
     print(f"light states seen       : {dict(lights) or 'none'}")
     print(f"hazard ID switches      : {id_switch}")
+    scout_alerts = Counter()
+    for i in frames:
+        sc = frames[i].get("scout")
+        if sc and sc.get("type"):
+            scout_alerts[sc["type"]] += 1
+
     print(f"max concurrent tracks   : {max_trk}")
+    if scout_alerts:
+        print(f"scout alerts seen       : {dict(scout_alerts)}")
     if footer:
         print(f"footer frames           : {footer.get('frames')}")
 
