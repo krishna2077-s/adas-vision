@@ -6,21 +6,36 @@ function [committed_level, target_speed, lateral_cmd, rule_id, raw_history, down
 % Levels: PROCEED=0, CAUTION=1, SLOW=2, BRAKE=3, EMERGENCY_STOP=4
 PROCEED = 0; CAUTION = 1; SLOW = 2; BRAKE = 3; EMERGENCY_STOP = 4;
 
-% 1. Compute raw_level (R1-R7 rules)
+% 1. Compute raw_level (R1-R7 rules aligned with core/config.py & decision_engine.py)
 raw_level = PROCEED;
 raw_rule_id = 'R7';
 
+DIST_EMERGENCY_M = 5.0;
+TTC_EMERGENCY_S  = 1.2;
+TTC_BRAKE_S      = 2.5;
+TTC_CAUTION_S    = 4.0;
+MIN_CLOSING_MPS  = 0.3;
+RISK_DIST_HIGH   = 8.0;
+RISK_DIST_MED    = 20.0;
+
+is_closing = (closing_speed > MIN_CLOSING_MPS);
+
 if in_path
-    if nearest_dist <= 2.0
+    % R1: Emergency Stop (d <= 5.0m or TTC <= 1.2s closing)
+    if nearest_dist <= DIST_EMERGENCY_M || (is_closing && ttc <= TTC_EMERGENCY_S && ttc > 0)
         raw_level = EMERGENCY_STOP; raw_rule_id = 'R1';
-    elseif ttc <= 1.5
-        raw_level = EMERGENCY_STOP; raw_rule_id = 'R2/R3';
-    elseif ttc <= 3.0
-        raw_level = BRAKE; raw_rule_id = 'R4/R5';
-    elseif nearest_dist <= 15.0
-        raw_level = SLOW; raw_rule_id = 'R6';
-    elseif nearest_dist <= 30.0
-        raw_level = CAUTION; raw_rule_id = 'R7';
+    % R2: Heavy Brake (TTC <= 2.5s closing)
+    elseif is_closing && ttc <= TTC_BRAKE_S && ttc > 0
+        raw_level = BRAKE; raw_rule_id = 'R2';
+    % R3: Static High-Risk Hazard ahead (d <= 8.0m)
+    elseif nearest_dist <= RISK_DIST_HIGH
+        raw_level = BRAKE; raw_rule_id = 'R3';
+    % R5: Moderate slow for medium-risk in path (d <= 20.0m)
+    elseif nearest_dist <= RISK_DIST_MED
+        raw_level = SLOW; raw_rule_id = 'R5';
+    % R6: Gentle closing TTC or in-path caution
+    elseif (is_closing && ttc <= TTC_CAUTION_S && ttc > 0) || nearest_dist <= 30.0
+        raw_level = CAUTION; raw_rule_id = 'R6';
     end
 end
 

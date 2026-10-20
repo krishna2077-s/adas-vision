@@ -57,13 +57,13 @@ from torchvision.models.segmentation import lraspp_mobilenet_v3_large
 
 import adverse_aug   # Phase 12: rich real-world adverse augmentation
 
-# ── Paths (kept OUT of OneDrive so 20 GB isn't uploaded to the cloud) ──────────
-IDD_TAR      = r"C:\Users\Rakesh Sharma\Downloads\idd-segmentation.tar.gz"
-DATA_DIR     = r"C:\Users\Rakesh Sharma\Downloads\idd_extracted"   # ~20 GB extracted here
-MASK_DIR     = r"C:\Users\Rakesh Sharma\Downloads\idd_masks"       # rasterized masks cache
-INIT_WEIGHTS = "drivable_idd_full_best.pth"          # Phase 6c LRASPP — fine-tune FROM this
-OUT_WEIGHTS  = "drivable_idd_lraspp_aug_best.pth"    # best weights (what the app loads)
-CKPT         = "train_local_ckpt.pth"                # resumable state (survives reboots)
+# ── Paths (configurable via CLI or env var; defaults fallback to local dev paths) ──
+IDD_TAR      = os.environ.get("IDD_TAR", r"C:\Users\Rakesh Sharma\Downloads\idd-segmentation.tar.gz")
+DATA_DIR     = os.environ.get("DATA_DIR", r"C:\Users\Rakesh Sharma\Downloads\idd_extracted")   # ~20 GB extracted here
+MASK_DIR     = os.environ.get("MASK_DIR", r"C:\Users\Rakesh Sharma\Downloads\idd_masks")       # rasterized masks cache
+INIT_WEIGHTS = os.environ.get("INIT_WEIGHTS", "drivable_idd_full_best.pth")          # Phase 6c LRASPP — fine-tune FROM this
+OUT_WEIGHTS  = os.environ.get("OUT_WEIGHTS", "drivable_idd_lraspp_aug_best.pth")    # best weights (what the app loads)
+CKPT         = os.environ.get("CKPT", "train_local_ckpt.pth")                # resumable state (survives reboots)
 
 # ── Training config (CPU-sized; override on the command line) ─────────────────
 IN_W, IN_H   = 768, 432        # keep same as the deployed model
@@ -322,10 +322,22 @@ def main():
     ap.add_argument("--batch", type=int, default=4)
     ap.add_argument("--lr", type=float, default=5e-4, help="head LR; backbone uses 0.1x this")
     ap.add_argument("--threads", type=int, default=4, help="CPU threads (lower to keep PC usable)")
+    ap.add_argument("--idd-tar", type=str, default=IDD_TAR, help="path to IDD tar.gz archive")
+    ap.add_argument("--data-dir", type=str, default=DATA_DIR, help="path to extracted IDD dataset")
+    ap.add_argument("--mask-dir", type=str, default=MASK_DIR, help="path to rasterized masks")
+    ap.add_argument("--init-weights", type=str, default=INIT_WEIGHTS, help="initial model weights")
+    ap.add_argument("--out-weights", type=str, default=OUT_WEIGHTS, help="output model weights path")
     ap.add_argument("--adverse", action="store_true",
                     help="Phase 12: rich rain/snow/glare/low-light augmentation + tougher "
                          "night+fog+rain hard val; writes to *_adv_* files (adopted model untouched)")
     args = ap.parse_args()
+
+    global IDD_TAR, DATA_DIR, MASK_DIR, INIT_WEIGHTS, OUT_WEIGHTS, CKPT
+    IDD_TAR = args.idd_tar
+    DATA_DIR = args.data_dir
+    MASK_DIR = args.mask_dir
+    INIT_WEIGHTS = args.init_weights
+    OUT_WEIGHTS = args.out_weights
 
     torch.set_num_threads(max(1, args.threads))
 
